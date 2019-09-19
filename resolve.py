@@ -116,16 +116,17 @@ def compute_likelihood(X_n, X_m, Y_K, center, shifts, angles, beta, gamma):
 
 
 def compute_likelihood_theta(theta, X_n, X_m, Y_K, center, beta):
+    K = len(Y_K)
+    M = len(X_m)
+
     Z_x = cov(X_n, X_n)
-    shifts = theta[:16]
-    angles = theta[16:32]
-    gamma = theta[32]
+
+    shifts = np.array(theta[:2*K]).reshape(-1, 2)
+    angles = np.array(theta[2*K:2*K+K])
+    gamma = theta[-1]
 
     W_K = [transform_mat(X_n, X_m, center, shift, angle, gamma) for shift, angle in zip(shifts, angles)]
     W_K = np.array(W_K)
-
-    K = len(shifts)
-    M = len(X_m)
     return marginal_log_likelihood(Z_x, W_K, Y_K, beta=beta, M=M, K=K)
 
 
@@ -146,8 +147,8 @@ if __name__ == '__main__':
 
     image = io.imread(image_path)
 
-    theta = np.zeros((num_images*2+1,))
-    theta[32] = 4  # gamma
+    theta = np.zeros((num_images*3+1,))
+    theta[-1] = 4  # gamma
 
     X_m = get_coords(9, 9)
     X_n = get_coords(18, 18)
@@ -172,3 +173,8 @@ if __name__ == '__main__':
     print(angles)
 
     res = minimize(compute_likelihood_theta, theta, args=(X_n, X_m, Y_K, center, beta))
+    shifts, angles, gamma = get_parameters(res, num_images)
+
+    print(shifts)
+    print(angles)
+    print(gamma)
