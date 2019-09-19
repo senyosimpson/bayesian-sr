@@ -2,7 +2,7 @@ import numpy as np
 
 
 def cov(x_i, x_j, r=1.0, a=1.0):
-    """
+    """ 
     The covariance function that determines smoothness of GP
     """
     x_i_sum = np.sum(x_i ** 2, axis=1).reshape(-1, 1)
@@ -61,22 +61,25 @@ def mean(W_K, Y_K, sigma, beta):
     """
     a = 0
     for w, y in zip(W_K, Y_K):
+        y = y.reshape(-1, 1)
         a += np.dot(w.T, y)
     mu = beta * np.dot(sigma, a)
     return mu
 
 
-def marginal_log_likelihood(beta, y, W, mu, Z_x, sigma, K, M):
-    sigma = variance(Z_x, W, W, beta)  # arguments need to be changed here for the first W
-    mu = mean(W, y, beta, sigma)
+def marginal_log_likelihood(Z_x, W_K, Y_K, beta, M, K):
+    sigma = variance(Z_x, W_K, beta)
+    mu = mean(W_K, Y_K, sigma, beta)
 
-    y_sum = np.sum(y ** 2, axis=1)
-    W_u = np.matmul(W, mu)
-    W_u_sum = np.sum(W_u ** 2, axis=1)
-    likelihood = y_sum + W_u_sum - (2 * np.dot(y_sum, W_u.T))
+    likelihood = 0
+    for w, y in zip(W_K, Y_K):
+        y = y.reshape(-1, 1)
+        y_sum = np.sum(y ** 2, axis=0)
+        w_u = np.dot(w, mu)
+        w_u_sum = np.sum(w_u ** 2, axis=0)
+        likelihood += y_sum + w_u_sum - (2 * np.dot(y.flatten(), w_u.flatten()))
     likelihood *= beta
-
-    likelihood += np.matmul(np.dot(mu.T, np.linalg.inv(Z_x)), mu)
+    likelihood += np.dot(np.dot(mu.T, np.linalg.inv(Z_x)), mu)[0][0]
     likelihood += np.log(np.linalg.det(Z_x)) - np.log(np.linalg.det(sigma)) - (K * M * np.log(beta))
     likelihood *= -0.5
     return likelihood
