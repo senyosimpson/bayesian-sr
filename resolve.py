@@ -106,9 +106,6 @@ def marginal_log_likelihood(Z_x, W_K, Y_K, beta, M, K):
 
 def compute_likelihood(X_n, X_m, Y_K, center, shifts, angles, beta, gamma):
     Z_x = cov(X_n, X_n)
-    # shifts = theta[:16]
-    # angles = theta[16:32]
-    # gamma = theta[33]
 
     W_K = [transform_mat(X_n, X_m, center, shift, angle, gamma) for shift, angle in zip(shifts, angles)]
     W_K = np.array(W_K)
