@@ -1,4 +1,6 @@
+import argparse
 import numpy as np
+from skimage import io
 from scipy.optimize import minimize
 
 
@@ -25,7 +27,7 @@ def get_parameters(res, K):
 
 
 # Building Blocks
-def cov(x_i, x_j, r=1.0, a=1.0):
+def cov(x_i, x_j, r=1.0, a=0.04):
     """ 
     The covariance function that determines smoothness of GP
     """
@@ -76,13 +78,6 @@ def variance(Z_x, W_K, beta):
 
 
 def mean(W_K, Y_K, sigma, beta):
-    """
-    :param W_K:
-    :param Y_K: a kxM dimension matrix
-    :param beta:
-    :param sigma:
-    :return:
-    """
     a = 0
     for w, y in zip(W_K, Y_K):
         y = y.reshape(-1, 1)
@@ -109,7 +104,74 @@ def marginal_log_likelihood(Z_x, W_K, Y_K, beta, M, K):
     return likelihood
 
 
-# gamma is a learnable parameter
-def compute_likelihood(X, y, center, shifts, gamma):
-    # takes in the necessary parameters to calculate everything and return a likelihood score
-    pass
+def compute_likelihood(X_n, X_m, Y_K, center, shifts, angles, beta, gamma):
+    Z_x = cov(X_n, X_n)
+    # shifts = theta[:16]
+    # angles = theta[16:32]
+    # gamma = theta[33]
+
+    W_K = [transform_mat(X_n, X_m, center, shift, angle, gamma) for shift, angle in zip(shifts, angles)]
+    W_K = np.array(W_K)
+
+    K = len(shifts)
+    M = len(X_m)
+    return marginal_log_likelihood(Z_x, W_K, Y_K, beta=beta, M=M, K=K)
+
+
+def compute_likelihood_theta(theta, X_n, X_m, Y_K, center, beta):
+    Z_x = cov(X_n, X_n)
+    shifts = theta[:16]
+    angles = theta[16:32]
+    gamma = theta[32]
+
+    W_K = [transform_mat(X_n, X_m, center, shift, angle, gamma) for shift, angle in zip(shifts, angles)]
+    W_K = np.array(W_K)
+
+    K = len(shifts)
+    M = len(X_m)
+    return marginal_log_likelihood(Z_x, W_K, Y_K, beta=beta, M=M, K=K)
+
+
+if __name__ == '__main__':
+    parser = argparse.ArgumentParser()
+    parser.add_argument('--image-path',
+                        type=str,
+                        required=True,
+                        help='The path to the image')
+    parser.add_argument('--num-images',
+                        type=int,
+                        required=False,
+                        default=16,
+                        help='The number of low resolution images to use')
+    args = parser.parse_args()
+    image_path = args.image_path
+    num_images = args.num_images
+
+    image = io.imread(image_path)
+
+    theta = np.zeros((num_images*2+1,))
+    theta[32] = 4  # gamma
+
+    X_m = get_coords(9, 9)
+    X_n = get_coords(18, 18)
+
+    # set initial image and params
+    beta = 0.05 ** 2
+    center = np.array([40, 40])
+    shifts = [[0, 0]]  # store for comparison
+    angles = [0]  # store for comparison
+    Y_K = [normalize(image[300:309, 400:409].flatten())]
+
+    for _ in range(num_images-1):
+        xshift = np.random.randint(-2, 3)
+        yshift = np.random.randint(-2, 3)
+        shifts.append([xshift, yshift])
+        angles.append(0)
+        i = normalize(image[300+yshift:309+yshift, 400+xshift:409+xshift].flatten())
+        Y_K.append(i)
+    Y_K = np.array(Y_K)
+
+    print(shifts)
+    print(angles)
+
+    res = minimize(compute_likelihood_theta, theta, args=(X_n, X_m, Y_K, center, beta))
