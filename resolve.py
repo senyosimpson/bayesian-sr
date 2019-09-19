@@ -1,6 +1,30 @@
 import numpy as np
+from scipy.optimize import minimize
 
 
+# helper functions
+def get_coords(height, width):
+    coords = []
+    for h in range(height):
+        for w in range(width):
+            coords.append([h, w])
+    return np.array(coords)
+
+
+def normalize(image):
+    return 0.5 * (2 * (image-np.min(image))/(np.max(image)-np.min(image)) - 1)
+
+
+def get_parameters(res, K):
+    """ Gets the estimated parameters from results
+
+    :param res:
+    :param K: the number of images used
+    """
+    raise NotImplementedError
+
+
+# Building Blocks
 def cov(x_i, x_j, r=1.0, a=1.0):
     """ 
     The covariance function that determines smoothness of GP
