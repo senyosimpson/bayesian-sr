@@ -17,13 +17,16 @@ def normalize(image):
     return 0.5 * (2 * (image-np.min(image))/(np.max(image)-np.min(image)) - 1)
 
 
-def get_parameters(res, K):
+def get_parameters(params, K):
     """ Gets the estimated parameters from results
 
     :param res:
     :param K: the number of images used
     """
-    raise NotImplementedError
+    shifts = np.array(params[:2*K]).reshape(-1, 2)
+    angles = np.array(params[2*K:2*K+K])
+    gamma = params[-1]
+    return shifts, angles, gamma
 
 
 # Building Blocks
@@ -173,7 +176,9 @@ if __name__ == '__main__':
     print(angles)
 
     res = minimize(compute_likelihood_theta, theta, args=(X_n, X_m, Y_K, center, beta))
-    shifts, angles, gamma = get_parameters(res, num_images)
+    print(res.success)
+    print(res.message)
+    shifts, angles, gamma = get_parameters(res.x, num_images)
 
     print(shifts)
     print(angles)
