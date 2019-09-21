@@ -102,7 +102,9 @@ def marginal_log_likelihood(Z_x, W_K, Y_K, beta, M, K):
         likelihood += y_sum + w_u_sum - (2 * np.dot(y.flatten(), w_u.flatten()))
     likelihood *= beta
     likelihood += np.dot(np.dot(mu.T, np.linalg.inv(Z_x)), mu)[0][0]
-    likelihood += np.log(np.linalg.det(Z_x)) - np.log(np.linalg.det(sigma)) - (K * M * np.log(beta))
+    Z_x_sign, Z_x_logdet = np.linalg.slogdet(Z_x)
+    sigma_sign, sigma_logdet = np.linalg.slogdet(sigma)
+    likelihood += (Z_x_sign * Z_x_logdet) - (sigma_sign * sigma_logdet) - (K * M * np.log(beta))
     likelihood *= -0.5
     return likelihood
 
