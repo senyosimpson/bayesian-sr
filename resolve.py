@@ -13,6 +13,15 @@ def get_coords(height, width):
     return np.array(coords)
 
 
+def get_normalized_coords(height, width):
+    coords = []
+    height, width = np.linspace(0, 1, height), np.linspace(0, 1, width)
+    for h in height:
+        for w in width:
+            coords.append([h, w])
+    return np.array(coords)
+
+
 def normalize(image):
     return 0.5 * (2 * (image-np.min(image))/(np.max(image)-np.min(image)) - 1)
 
@@ -155,8 +164,8 @@ if __name__ == '__main__':
     theta = np.zeros((num_images*3+1,))
     theta[-1] = 4  # gamma
 
-    X_m = get_coords(9, 9)
-    X_n = get_coords(18, 18)
+    X_m = get_normalized_coords(9, 9)
+    X_n = get_normalized_coords(18, 18)
 
     # set initial image and params
     beta = 0.05 ** 2
@@ -177,7 +186,9 @@ if __name__ == '__main__':
     print(shifts)
     print(angles)
 
-    res = minimize(compute_likelihood_theta, theta, args=(X_n, X_m, Y_K, center, beta))
+    res = minimize(compute_likelihood_theta, theta,
+                   args=(X_n, X_m, Y_K, center, beta),
+                   method='CG')
     print(res.success)
     print(res.message)
     shifts, angles, gamma = get_parameters(res.x, num_images)
