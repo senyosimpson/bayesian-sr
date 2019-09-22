@@ -1,5 +1,7 @@
 import argparse
 import numpy as np
+from PIL import Image
+from PIL import ImageFilter
 from skimage import io
 from scipy.optimize import minimize
 
@@ -164,24 +166,54 @@ if __name__ == '__main__':
     num_images = args.num_images
 
     X_m = get_normalized_coords(9, 9)
-    X_n = get_normalized_coords(36, 36) # 4x upscaling or 16x more pixels
+    X_n = get_normalized_coords(50, 50)
 
     image = io.imread(image_path)
     # set initial image and params
     beta = 0.05 ** 2
-    center = np.array([40, 40])
+    gamma = 2
+    center = np.array([5, 5])
     shifts = [[0, 0]]  # store for comparison
     angles = [0]  # store for comparison
-    gamma = 2
-    Y_K = [normalize(image[300:309, 400:409].flatten())]
+    Y_K = []
 
-    for _ in range(num_images-1):
-        xshift = np.random.randint(-2, 3)
-        yshift = np.random.randint(-2, 3)
-        shifts.append([xshift, yshift])
-        angles.append(0)
-        i = normalize(image[300+yshift:309+yshift, 400+xshift:409+xshift].flatten())
-        Y_K.append(i)
+    w, h = image.size
+    w_down, h_down = w // 4, h // 4
+    # apply gaussian blur
+    img = image.filter(ImageFilter.GaussianBlur(2))
+    # downsample image
+    img = img.resize((w_down, h_down), resample=Image.BICUBIC)
+    # get 9x9 image centered on the center
+    w, h = img.size
+    center_w, center_h = w // 2, h // 2
+    img = np.asarray(img)
+    img = img[center_h - 4:center_h + 5, center_w - 4:center_w + 5]
+    img = img.flatten()
+    assert len(img) == 81
+    Y_K.append(normalize(img))
+
+    # generate rest of the images
+    for _ in range(num_images - 1):
+        # translate image
+        shift = np.random.randint(-2, 3)
+        shifts.append([shift, shift])
+        img = image.transform(image.size, Image.AFFINE, (1, 0, shift, 0, 1, shift))
+        # rotate image
+        angle = np.random.randint(-4, 5)
+        angles.append(angle)
+        img = img.rotate(angle, resample=Image.BICUBIC)
+        # apply gaussian blur
+        img = img.filter(ImageFilter.GaussianBlur(2))
+        # downsample image
+        img = img.resize((w_down, h_down), resample=Image.BICUBIC)
+        # get 9x9 image centered on the center
+        w, h = img.size
+        center_w, center_h = w // 2, h // 2
+        img = np.asarray(img)
+        img = img[center_h-4:center_h+5, center_w-4:center_w+5]
+        img = img.flatten()
+        assert len(img) == 81
+        Y_K.append(normalize(img))
     Y_K = np.array(Y_K)
 
     print('Starting parameter estimation')
