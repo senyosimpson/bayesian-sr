@@ -27,18 +27,14 @@ def normalize(image):
 
 
 def get_parameters(params, K):
-    """ Gets the estimated parameters from results
-
-    :param res:
-    :param K: the number of images used
-    """
+    """ Gets the estimated parameters from results """
     shifts = np.array(params[:2*K]).reshape(-1, 2)
     angles = np.array(params[2*K:2*K+K])
     gamma = params[-1]
     return shifts, angles, gamma
 
 
-# Building Blocks
+# building blocks
 def cov(x_i, x_j, r=1.0, a=0.04):
     """ 
     The covariance function that determines smoothness of GP
@@ -108,6 +104,7 @@ def marginal_log_likelihood(Z_x, W_K, Y_K, beta, M, K):
         w_u = np.dot(w, mu)
         w_u_sum = np.sum(w_u ** 2, axis=0)
         likelihood += y_sum + w_u_sum - (2 * np.dot(y.flatten(), w_u.flatten()))
+        likelihood = likelihood[0]
     likelihood *= beta
     likelihood += np.dot(np.dot(mu.T, np.linalg.inv(Z_x)), mu)[0][0]
     Z_x_sign, Z_x_logdet = np.linalg.slogdet(Z_x)
@@ -130,7 +127,7 @@ def compute_nll(X_n, X_m, Y_K, center, shifts, angles, beta, gamma):
     return nll
 
 
-def compute_nll_theta(theta, X_n, X_m, Y_K, center, beta):
+def compute_nll_theta(theta, X_n, X_m, Y_K, center, beta, gamma=None, angles=None):
     """ Computes the negative marginal log likelihood """
     K = len(Y_K)
     M = len(X_m)
@@ -138,8 +135,12 @@ def compute_nll_theta(theta, X_n, X_m, Y_K, center, beta):
     Z_x = cov(X_n, X_n) + beta * np.eye(len(X_n))
 
     shifts = np.array(theta[:2*K]).reshape(-1, 2)
-    angles = np.array(theta[2*K:2*K+K])
-    gamma = theta[-1]
+    # if angles are not given, fetch them from theta
+    if not angles:
+        angles = np.array(theta[2*K:2*K+K])
+    # if gamma is not give, fetch it from theta
+    if not gamma:
+        gamma = theta[-1]
 
     W_K = [transform_mat(X_n, X_m, center, shift, angle, gamma) for shift, angle in zip(shifts, angles)]
     W_K = np.array(W_K)
@@ -162,19 +163,16 @@ if __name__ == '__main__':
     image_path = args.image_path
     num_images = args.num_images
 
-    image = io.imread(image_path)
-
-    theta = np.zeros((num_images*3+1,))
-    theta[-1] = 4  # gamma
-
     X_m = get_normalized_coords(9, 9)
-    X_n = get_normalized_coords(18, 18)
+    X_n = get_normalized_coords(36, 36) # 4x upscaling or 16x more pixels
 
+    image = io.imread(image_path)
     # set initial image and params
     beta = 0.05 ** 2
     center = np.array([40, 40])
     shifts = [[0, 0]]  # store for comparison
     angles = [0]  # store for comparison
+    gamma = 2
     Y_K = [normalize(image[300:309, 400:409].flatten())]
 
     for _ in range(num_images-1):
@@ -186,16 +184,49 @@ if __name__ == '__main__':
         Y_K.append(i)
     Y_K = np.array(Y_K)
 
-    print(shifts)
-    print(angles)
+    print('Starting parameter estimation')
+    init_guess_shifts = np.zeros((num_images*2))
+    init_guess_angles = np.zeros(num_images)
+    init_guess_gamma = 4
 
+    print('Estimating shift parameters')
+    theta = init_guess_shifts
+    res = minimize(compute_nll_theta, theta,
+                   args=(X_n, X_m, Y_K, center, beta, init_guess_gamma, init_guess_angles),
+                   method='CG')
+    print(res.success)
+    print(res.message)
+    params = res.x
+    estimated_shifts = np.array(params[:2*num_images]).reshape(-1, 2)
+
+    print('Estimating shift and angle parameters')
+    theta = np.concatenate((estimated_shifts, init_guess_angles))
+    res = minimize(compute_nll_theta, theta,
+                   args=(X_n, X_m, Y_K, center, beta, init_guess_gamma),
+                   method='CG')
+    print(res.success)
+    print(res.message)
+    params = res.x
+    estimated_shifts = np.array(params[:2*num_images]).reshape(-1, 2)
+    estimated_angles = np.array(params[2*num_images:2*num_images+num_images])
+
+    print('Estimating shift, angle and PSF width parameters')
+    theta = np.concatenate((estimated_shifts, estimated_angles, init_guess_gamma))
     res = minimize(compute_nll_theta, theta,
                    args=(X_n, X_m, Y_K, center, beta),
                    method='CG')
     print(res.success)
     print(res.message)
-    shifts, angles, gamma = get_parameters(res.x, num_images)
+    params = res.x
+    estimated_shifts = np.array(params[:2*num_images]).reshape(-1, 2)
+    estimated_angles = np.array(params[2*num_images:2*num_images+num_images])
+    estimated_gamma = params[-1]
 
-    print(shifts)
-    print(angles)
-    print(gamma)
+    print('Original Shifts:', shifts)
+    print('Estimated Shifts:', estimated_shifts)
+    print('Original Angles:', angles)
+    print('Estimated Angles:', estimated_angles)
+    print('Original Gamma:', gamma)
+    print('Estimated Gamma:', estimated_gamma)
+
+    print('Estimating high resolution image')
