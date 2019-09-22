@@ -161,9 +161,18 @@ if __name__ == '__main__':
                         required=False,
                         default=16,
                         help='The number of low resolution images to use')
+    parser.add_argument('--seed',
+                        type=int,
+                        default=42,  # remove later
+                        required=False,
+                        help='Random seed to make random functions deterministic')
     args = parser.parse_args()
     image_path = args.image_path
     num_images = args.num_images
+    seed = args.seed
+
+    if seed:
+        np.random.seed(seed)
 
     X_m = get_normalized_coords(9, 9)
     X_n = get_normalized_coords(50, 50)
