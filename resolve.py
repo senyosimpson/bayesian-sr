@@ -68,8 +68,6 @@ def psf_center(x_j, center, shift, angle):
     """ Used to calculate the center of the psf
     This is the vector u_j in the paper
     """
-    center = center.reshape(-1, 2)
-    shift = shift.reshape(-1, 2)
     rotation_matrix = [
         [np.cos(angle), np.sin(angle)],
         [-np.sin(angle), np.cos(angle)]]
@@ -99,6 +97,7 @@ def mean(W_K, Y_K, sigma, beta):
 
 
 def marginal_log_likelihood(Z_x, W_K, Y_K, beta, M, K):
+    """ Calculates the marginal log likehood"""
     sigma = variance(Z_x, W_K, beta)
     mu = mean(W_K, Y_K, sigma, beta)
 
@@ -118,7 +117,8 @@ def marginal_log_likelihood(Z_x, W_K, Y_K, beta, M, K):
     return likelihood
 
 
-def compute_likelihood(X_n, X_m, Y_K, center, shifts, angles, beta, gamma):
+def compute_nll(X_n, X_m, Y_K, center, shifts, angles, beta, gamma):
+    """ Computes the negative marginal log likelihood """
     Z_x = cov(X_n, X_n) + beta * np.eye(len(X_n))
 
     W_K = [transform_mat(X_n, X_m, center, shift, angle, gamma) for shift, angle in zip(shifts, angles)]
@@ -126,10 +126,12 @@ def compute_likelihood(X_n, X_m, Y_K, center, shifts, angles, beta, gamma):
 
     K = len(shifts)
     M = len(X_m)
-    return marginal_log_likelihood(Z_x, W_K, Y_K, beta=beta, M=M, K=K)
+    nll = -marginal_log_likelihood(Z_x, W_K, Y_K, beta=beta, M=M, K=K)
+    return nll
 
 
-def compute_likelihood_theta(theta, X_n, X_m, Y_K, center, beta):
+def compute_nll_theta(theta, X_n, X_m, Y_K, center, beta):
+    """ Computes the negative marginal log likelihood """
     K = len(Y_K)
     M = len(X_m)
 
@@ -141,7 +143,8 @@ def compute_likelihood_theta(theta, X_n, X_m, Y_K, center, beta):
 
     W_K = [transform_mat(X_n, X_m, center, shift, angle, gamma) for shift, angle in zip(shifts, angles)]
     W_K = np.array(W_K)
-    return marginal_log_likelihood(Z_x, W_K, Y_K, beta=beta, M=M, K=K)
+    nll = -marginal_log_likelihood(Z_x, W_K, Y_K, beta=beta, M=M, K=K)
+    return nll
 
 
 if __name__ == '__main__':
@@ -186,7 +189,7 @@ if __name__ == '__main__':
     print(shifts)
     print(angles)
 
-    res = minimize(compute_likelihood_theta, theta,
+    res = minimize(compute_nll_theta, theta,
                    args=(X_n, X_m, Y_K, center, beta),
                    method='CG')
     print(res.success)
