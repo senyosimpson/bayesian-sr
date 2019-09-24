@@ -1,8 +1,6 @@
 import argparse
 import numpy as np
 from PIL import Image
-from PIL import ImageFilter
-from skimage import io
 from scipy.optimize import minimize
 
 
@@ -96,7 +94,7 @@ def mean(W_K, Y_K, sigma, beta):
 
 
 def marginal_log_likelihood(Z_x, W_K, Y_K, beta, M, K):
-    """ Calculates the marginal log likehood"""
+    """ Calculates the marginal log likelihood"""
     sigma = variance(Z_x, W_K, beta)
     mu = mean(W_K, Y_K, sigma, beta)
 
@@ -236,7 +234,8 @@ if __name__ == '__main__':
     theta = np.concatenate((estimated_shifts, init_guess_angles))
     res = minimize(compute_nll, theta,
                    args=(X_n, X_m, Y_K, center, beta, init_guess_gamma),
-                   method='CG')
+                   method='CG',
+                   options=options)
     print(res.success)
     print(res.message)
     params = res.x
@@ -247,7 +246,8 @@ if __name__ == '__main__':
     theta = np.concatenate((estimated_shifts, estimated_angles, [init_guess_gamma]))
     res = minimize(compute_nll, theta,
                    args=(X_n, X_m, Y_K, center, beta),
-                   method='CG')
+                   method='CG',
+                   options=options)
     print(res.success)
     print(res.message)
     params = res.x
