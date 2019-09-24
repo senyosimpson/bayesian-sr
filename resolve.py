@@ -38,7 +38,7 @@ def get_parameters(params, K):
 
 # building blocks
 def cov(x_i, x_j, r=1.0, a=0.04):
-    """ 
+    """
     The covariance function that determines smoothness of GP
     """
     x_i_sum = np.sum(x_i ** 2, axis=1).reshape(-1, 1)
@@ -66,6 +66,7 @@ def psf_center(x_j, center, shift, angle):
     """ Used to calculate the center of the psf
     This is the vector u_j in the paper
     """
+    angle = np.radians(angle)
     rotation_matrix = [
         [np.cos(angle), np.sin(angle)],
         [-np.sin(angle), np.cos(angle)]]
@@ -116,32 +117,20 @@ def marginal_log_likelihood(Z_x, W_K, Y_K, beta, M, K):
     return likelihood
 
 
-def compute_nll(X_n, X_m, Y_K, center, shifts, angles, beta, gamma):
-    """ Computes the negative marginal log likelihood """
-    Z_x = cov(X_n, X_n) + beta * np.eye(len(X_n))
-
-    W_K = [transform_mat(X_n, X_m, center, shift, angle, gamma) for shift, angle in zip(shifts, angles)]
-    W_K = np.array(W_K)
-
-    K = len(shifts)
-    M = len(X_m)
-    nll = -marginal_log_likelihood(Z_x, W_K, Y_K, beta=beta, M=M, K=K)
-    return nll
-
-
-def compute_nll_theta(theta, X_n, X_m, Y_K, center, beta, gamma=None, angles=None):
+def compute_nll(theta, X_n, X_m, Y_K, center, beta, gamma=None, angles=None):
     """ Computes the negative marginal log likelihood """
     K = len(Y_K)
     M = len(X_m)
+    var = 1 / beta
 
-    Z_x = cov(X_n, X_n) + beta * np.eye(len(X_n))
+    Z_x = cov(X_n, X_n) + var * np.eye(len(X_n))
 
     shifts = np.array(theta[:2*K]).reshape(-1, 2)
     # if angles are not given, fetch them from theta
-    if not angles:
+    if angles is None:
         angles = np.array(theta[2*K:2*K+K])
-    # if gamma is not give, fetch it from theta
-    if not gamma:
+    # if gamma is not given, fetch it from theta
+    if gamma is None:
         gamma = theta[-1]
 
     W_K = [transform_mat(X_n, X_m, center, shift, angle, gamma) for shift, angle in zip(shifts, angles)]
@@ -161,6 +150,11 @@ if __name__ == '__main__':
                         required=False,
                         default=16,
                         help='The number of low resolution images to use')
+    parser.add_argument('--max-iters',
+                        type=int,
+                        default=5,
+                        required=False,
+                        help='Maximum number of iterations for optimizer')
     parser.add_argument('--seed',
                         type=int,
                         default=42,  # remove later
@@ -169,91 +163,89 @@ if __name__ == '__main__':
     args = parser.parse_args()
     image_path = args.image_path
     num_images = args.num_images
+    max_iters = args.max_iters
     seed = args.seed
 
     if seed:
         np.random.seed(seed)
 
-    X_m = get_normalized_coords(9, 9)
-    X_n = get_normalized_coords(50, 50)
+    hr_image = Image.open(image_path)
+    # downsample image to make it faster to compute
+    hr_image = hr_image.resize((300, 300), resample=Image.BICUBIC)
 
-    image = io.imread(image_path)
     # set initial image and params
-    beta = 0.05 ** 2
+    beta = 1 / (0.05 ** 2)
+    var = 1 / beta
     gamma = 2
-    center = np.array([5, 5])
     shifts = [[0, 0]]  # store for comparison
     angles = [0]  # store for comparison
     Y_K = []
 
-    w, h = image.size
-    w_down, h_down = w // 4, h // 4
-    # apply gaussian blur
-    img = image.filter(ImageFilter.GaussianBlur(2))
-    # downsample image
-    img = img.resize((w_down, h_down), resample=Image.BICUBIC)
-    # get 9x9 image centered on the center
-    w, h = img.size
-    center_w, center_h = w // 2, h // 2
-    img = np.asarray(img)
-    img = img[center_h - 4:center_h + 5, center_w - 4:center_w + 5]
-    img = img.flatten()
-    assert len(img) == 81
-    Y_K.append(normalize(img))
+    # generate LR images
+    image = np.asarray(hr_image).flatten().reshape(-1, 1)
+    w, h = hr_image.size
+    w_down, h_down = w//4, h//4
+    center = np.array([h_down//2, w_down//2])
+    center_h, center_w = center
 
-    # generate rest of the images
+    X_n = get_coords(h, w)
+    X_m = get_coords(h_down, w_down)
+
+    trans_mat = transform_mat(X_n, X_m, center, [0, 0], 0, gamma=gamma)
+    Y_k = np.dot(trans_mat, image).reshape(h_down, w_down)
+    Y_k = Y_k[center_h-4:center_h+5, center_w-4:center_w+5].flatten()
+    Y_k += var * np.random.randn(*Y_k.shape)
+    Y_K.append(normalize(Y_k))
+
     for _ in range(num_images - 1):
-        # translate image
-        shift = np.random.randint(-2, 3)
-        shifts.append([shift, shift])
-        img = image.transform(image.size, Image.AFFINE, (1, 0, shift, 0, 1, shift))
-        # rotate image
+        xshift = np.random.randint(-2, 3)
+        yshift = np.random.randint(-2, 3)
+        shifts.append([xshift, yshift])
         angle = np.random.randint(-4, 5)
         angles.append(angle)
-        img = img.rotate(angle, resample=Image.BICUBIC)
-        # apply gaussian blur
-        img = img.filter(ImageFilter.GaussianBlur(2))
-        # downsample image
-        img = img.resize((w_down, h_down), resample=Image.BICUBIC)
-        # get 9x9 image centered on the center
-        w, h = img.size
-        center_w, center_h = w // 2, h // 2
-        img = np.asarray(img)
-        img = img[center_h-4:center_h+5, center_w-4:center_w+5]
-        img = img.flatten()
-        assert len(img) == 81
-        Y_K.append(normalize(img))
-    Y_K = np.array(Y_K)
+        trans_mat = transform_mat(X_n, X_m, center, [xshift, yshift], angle, gamma=gamma)
+        Y_k = np.dot(trans_mat, image).reshape(h_down, w_down)
+        Y_k = Y_k[center_h-4:center_h+5, center_w-4:center_w+5].flatten()
+        Y_k += var * np.random.randn(*Y_k.shape)
+        Y_K.append(normalize(Y_k))
 
     print('Starting parameter estimation')
+    X_n = get_coords(50, 50)
+    X_m = get_coords(9, 9)
+    center = np.array([5, 5])
     init_guess_shifts = np.zeros((num_images*2))
     init_guess_angles = np.zeros(num_images)
     init_guess_gamma = 4
+    options = {
+        'disp': True,
+        'maxiter': max_iters
+    }
 
     print('Estimating shift parameters')
     theta = init_guess_shifts
-    res = minimize(compute_nll_theta, theta,
+    res = minimize(compute_nll, theta,
                    args=(X_n, X_m, Y_K, center, beta, init_guess_gamma, init_guess_angles),
-                   method='CG')
+                   method='CG',
+                   options=options)
     print(res.success)
     print(res.message)
     params = res.x
-    estimated_shifts = np.array(params[:2*num_images]).reshape(-1, 2)
+    estimated_shifts = params[:2*num_images]
 
     print('Estimating shift and angle parameters')
     theta = np.concatenate((estimated_shifts, init_guess_angles))
-    res = minimize(compute_nll_theta, theta,
+    res = minimize(compute_nll, theta,
                    args=(X_n, X_m, Y_K, center, beta, init_guess_gamma),
                    method='CG')
     print(res.success)
     print(res.message)
     params = res.x
-    estimated_shifts = np.array(params[:2*num_images]).reshape(-1, 2)
-    estimated_angles = np.array(params[2*num_images:2*num_images+num_images])
+    estimated_shifts = params[:2*num_images]
+    estimated_angles = params[2*num_images:2*num_images+num_images]
 
     print('Estimating shift, angle and PSF width parameters')
-    theta = np.concatenate((estimated_shifts, estimated_angles, init_guess_gamma))
-    res = minimize(compute_nll_theta, theta,
+    theta = np.concatenate((estimated_shifts, estimated_angles, [init_guess_gamma]))
+    res = minimize(compute_nll, theta,
                    args=(X_n, X_m, Y_K, center, beta),
                    method='CG')
     print(res.success)
