@@ -92,7 +92,7 @@ def transform_mat2(x_i, x_j, center, shift, angle, image_dims, upscale_factor=4,
     return W
 
 
-def psf_center(x_j, center, shift, angle):
+def psf_center(x_j, center, shift, angle, upscaling_factor=4):
     """ Used to calculate the center of the psf
     This is the vector u_j in the paper
     """
@@ -103,7 +103,10 @@ def psf_center(x_j, center, shift, angle):
     rotation_matrix = np.array(rotation_matrix)
 
     u = np.dot(rotation_matrix, (x_j - center).T)
-    u = u.T + center + shift
+    u = u.T + center
+    if upscaling_factor:
+        u = upscaling_factor * u
+    u = u + shift
     return u
 
 
