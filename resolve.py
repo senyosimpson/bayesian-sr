@@ -201,7 +201,10 @@ if __name__ == '__main__':
     Y_K = []
 
     # generate LR images
-    image = np.asarray(hr_image).flatten().reshape(-1, 1)
+    image = np.pad(hr_image, (2, 2))
+    image = image.flatten().reshape(-1, 1)
+    image = normalize(image)
+
     w, h = hr_image.size
     w_down, h_down = w//4, h//4
     center = np.array([h_down//2, w_down//2])
