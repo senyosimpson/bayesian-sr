@@ -46,21 +46,7 @@ def cov(x_i, x_j, r=1.0, a=0.04):
     return out
 
 
-def transform_mat(x_i, x_j, center, shift, angle, gamma=2):
-    """ This is the transformation matrix that converts a high
-    resolution image into a low resolution image
-    In the paper this is denoted using W_ji
-    """
-    x_i_sum = np.sum(x_i ** 2, axis=1).reshape(-1, 1)
-    u_j = psf_center(x_j, center, shift, angle)
-    u_j_sum = np.sum(u_j ** 2, axis=1)
-    dist = x_i_sum + u_j_sum - (2 * np.dot(x_i, u_j.T))
-    out = np.exp(-(dist / gamma ** 2))
-    out /= np.sum(out, axis=0)
-    return out.T
-
-
-def transform_mat2(x_i, x_j, center, shift, angle, image_dims, upscale_factor=4, gamma=2, debug=False):
+def transform_mat(x_i, x_j, center, shift, angle, image_dims, upscale_factor=4, gamma=2):
     """ This is the transformation matrix that converts a high
     resolution image into a low resolution image
     In the paper this is denoted using W_ji
@@ -92,7 +78,7 @@ def transform_mat2(x_i, x_j, center, shift, angle, image_dims, upscale_factor=4,
     return W
 
 
-def psf_center(x_j, center, shift, angle, upscaling_factor=4):
+def psf_center(x_j, center, shift, angle, upscale_factor=4):
     """ Used to calculate the center of the psf
     This is the vector u_j in the paper
     """
@@ -104,8 +90,8 @@ def psf_center(x_j, center, shift, angle, upscaling_factor=4):
 
     u = np.dot(rotation_matrix, (x_j - center).T)
     u = u.T + center
-    if upscaling_factor:
-        u = upscaling_factor * u
+    if upscale_factor:
+        u = upscale_factor * u
     u = u + shift
     return u
 
@@ -150,7 +136,7 @@ def marginal_log_likelihood(Z_x, W_K, Y_K, beta, M, K):
     return likelihood
 
 
-def compute_nll(theta, X_n, X_m, Y_K, center, beta, gamma=None, angles=None):
+def compute_nll(theta, X_n, X_m, Y_K, center, beta, image_dims, upscale_factor=4, gamma=None, angles=None):
     """ Computes the negative marginal log likelihood """
     K = len(Y_K)
     M = len(X_m)
@@ -166,7 +152,7 @@ def compute_nll(theta, X_n, X_m, Y_K, center, beta, gamma=None, angles=None):
     if gamma is None:
         gamma = theta[-1]
 
-    W_K = [transform_mat(X_n, X_m, center, shift, angle, gamma) for shift, angle in zip(shifts, angles)]
+    W_K = [transform_mat(X_n, X_m, center, shift, angle, image_dims, upscale_factor, gamma) for shift, angle in zip(shifts, angles)]
     W_K = np.array(W_K)
     nll = -marginal_log_likelihood(Z_x, W_K, Y_K, beta=beta, M=M, K=K)
     return nll
@@ -190,7 +176,7 @@ if __name__ == '__main__':
                         help='Maximum number of iterations for optimizer')
     parser.add_argument('--seed',
                         type=int,
-                        default=42,  # remove later
+                        default=42,
                         required=False,
                         help='Random seed to make random functions deterministic')
     args = parser.parse_args()
@@ -224,23 +210,21 @@ if __name__ == '__main__':
     X_n = get_coords(h, w)
     X_m = get_coords(h_down, w_down)
 
-    trans_mat = transform_mat(X_n, X_m, center, [0, 0], 0, gamma=gamma)
+    trans_mat = transform_mat(X_n, X_m, center, [0, 0], 0, (h, w), gamma=gamma)
     Y_k = np.dot(trans_mat, image).reshape(h_down, w_down)
     Y_k = Y_k[center_h-4:center_h+5, center_w-4:center_w+5].flatten()
     Y_k += var * np.random.randn(*Y_k.shape)
     Y_K.append(normalize(Y_k))
 
     for _ in range(num_images - 1):
-        #xshift = np.random.randint(-2, 3)
-        #yshift = np.random.randint(-2, 3)
-        xshift = 4 * np.random.random_sample() - 2
-        yshift = 4 * np.random.random_sample() - 2
+        xshift = np.random.randint(-2, 3)
+        yshift = np.random.randint(-2, 3)
         shifts.append([xshift, yshift])
         #angle = 8 * np.random.random_sample() - 4
         angle = 0
         #angle = np.random.randint(-4, 5)
         angles.append(angle)
-        trans_mat = transform_mat(X_n, X_m, center, [xshift, yshift], angle, gamma=gamma)
+        trans_mat = transform_mat(X_n, X_m, center, [xshift, yshift], angle, (h, w), gamma=gamma)
         Y_k = np.dot(trans_mat, image).reshape(h_down, w_down)
         Y_k = Y_k[center_h-4:center_h+5, center_w-4:center_w+5].flatten()
         Y_k += var * np.random.randn(*Y_k.shape)
@@ -261,37 +245,37 @@ if __name__ == '__main__':
     print('Estimating shift parameters')
     theta = init_guess_shifts
     res = minimize(compute_nll, theta,
-                   args=(X_n, X_m, Y_K, center, beta, init_guess_gamma, init_guess_angles),
+                   args=(X_n, X_m, Y_K, center, beta, X_n.shape, 4, init_guess_gamma, init_guess_angles),
                    method='CG',
                    options=options)
     params = res.x
     estimated_shifts = params[:2*num_images]
 
-    print('Estimating shift and angle parameters')
-    theta = np.concatenate((estimated_shifts, init_guess_angles))
-    res = minimize(compute_nll, theta,
-                   args=(X_n, X_m, Y_K, center, beta, init_guess_gamma),
-                   method='CG',
-                   options=options)
-    params = res.x
-    estimated_shifts = params[:2*num_images]
-    estimated_angles = params[2*num_images:2*num_images+num_images]
+    # print('Estimating shift and angle parameters')
+    # theta = np.concatenate((estimated_shifts, init_guess_angles))
+    # res = minimize(compute_nll, theta,
+    #                args=(X_n, X_m, Y_K, center, beta, init_guess_gamma),
+    #                method='CG',
+    #                options=options)
+    # params = res.x
+    # estimated_shifts = params[:2*num_images]
+    # estimated_angles = params[2*num_images:2*num_images+num_images]
 
     print('Estimating shift, angle and PSF width parameters')
-    theta = np.concatenate((estimated_shifts, estimated_angles, [init_guess_gamma]))
+    theta = np.concatenate((estimated_shifts, [init_guess_gamma]))
     res = minimize(compute_nll, theta,
-                   args=(X_n, X_m, Y_K, center, beta),
+                   args=(X_n, X_m, Y_K, center, beta, X_n.shape, 4, None, init_guess_angles),
                    method='CG',
                    options=options)
     params = res.x
     estimated_shifts = np.array(params[:2*num_images]).reshape(-1, 2)
-    estimated_angles = np.array(params[2*num_images:2*num_images+num_images])
+    # estimated_angles = np.array(params[2*num_images:2*num_images+num_images])
     estimated_gamma = params[-1]
 
     print('Original Shifts:', shifts)
     print('Estimated Shifts:', estimated_shifts)
-    print('Original Angles:', angles)
-    print('Estimated Angles:', estimated_angles)
+    # print('Original Angles:', angles)
+    # print('Estimated Angles:', estimated_angles)
     print('Original Gamma:', gamma)
     print('Estimated Gamma:', estimated_gamma)
 
