@@ -51,7 +51,7 @@ def transform_mat(x_i, x_j, center, shift, angle, image_dims, upscale_factor=4, 
     resolution image into a low resolution image
     In the paper this is denoted using W_ji
     """
-    x_i_sum = np.sum(x_i ** 2, axis=1)  # .reshape(-1, 1)
+    x_i_sum = np.sum(x_i ** 2, axis=1)
     u_j = psf_center(x_j, center, shift, angle)
     u_j_sum = np.sum(u_j ** 2, axis=1).reshape(-1, 1)
     dist = x_i_sum + u_j_sum - (2 * np.dot(u_j, x_i.T))
@@ -70,7 +70,7 @@ def transform_mat(x_i, x_j, center, shift, angle, image_dims, upscale_factor=4, 
             row += upscale_factor
             col = 0
         kernel = kernel.reshape(h, w)
-        kernel = np.pad(kernel, (2, 2))
+        kernel = np.pad(kernel, (2, 2), mode='constant', constant_values=0)
         new_kernel = np.zeros_like(kernel)
         new_kernel[row:row+5, col:col+5] = kernel[row:row+5, col:col+5]
         W[idx] = new_kernel.flatten()
@@ -136,13 +136,13 @@ def marginal_log_likelihood(Z_x, W_K, Y_K, beta, M, K):
     return likelihood
 
 
-def compute_nll(theta, X_n, X_m, Y_K, center, beta, image_dims, upscale_factor=4, gamma=None, angles=None):
+def compute_nll(theta, X_n, X_n_sup, X_m, Y_K, center, beta, image_dims, upscale_factor=4, gamma=None, angles=None):
     """ Computes the negative marginal log likelihood """
     K = len(Y_K)
     M = len(X_m)
     var = 1 / beta
 
-    Z_x = cov(X_n, X_n) + var * np.eye(len(X_n))
+    Z_x = cov(X_n_sup, X_n_sup) + var * np.eye(len(X_n_sup))
 
     shifts = np.array(theta[:2*K]).reshape(-1, 2)
     # if angles are not given, fetch them from theta
@@ -152,7 +152,8 @@ def compute_nll(theta, X_n, X_m, Y_K, center, beta, image_dims, upscale_factor=4
     if gamma is None:
         gamma = theta[-1]
 
-    W_K = [transform_mat(X_n, X_m, center, shift, angle, image_dims, upscale_factor, gamma) for shift, angle in zip(shifts, angles)]
+    W_K = [transform_mat(X_n, X_m, center, shift, angle, image_dims, upscale_factor, gamma)
+           for shift, angle in zip(shifts, angles)]
     W_K = np.array(W_K)
     nll = -marginal_log_likelihood(Z_x, W_K, Y_K, beta=beta, M=M, K=K)
     return nll
@@ -201,7 +202,8 @@ if __name__ == '__main__':
     Y_K = []
 
     # generate LR images
-    image = np.pad(hr_image, (2, 2))
+    print('Generating reference LR image')
+    image = np.pad(hr_image, (2, 2), mode='constant', constant_values=0)
     image = image.flatten().reshape(-1, 1)
     image = normalize(image)
 
@@ -219,7 +221,8 @@ if __name__ == '__main__':
     Y_k += var * np.random.randn(*Y_k.shape)
     Y_K.append(normalize(Y_k))
 
-    for _ in range(num_images - 1):
+    for idx in range(num_images - 1):
+        print('Generating low resolution image %d/%d' % (idx+1, num_images-1))
         xshift = np.random.randint(-2, 3)
         yshift = np.random.randint(-2, 3)
         shifts.append([xshift, yshift])
@@ -234,8 +237,12 @@ if __name__ == '__main__':
         Y_K.append(normalize(Y_k))
 
     print('Starting parameter estimation')
-    X_n = get_coords(50, 50)
-    X_m = get_coords(9, 9)
+    X_n_sup_shape = (40, 40)
+    X_n_shape = (36, 36)
+    X_m_shape = (9, 9)
+    X_n_sup = get_coords(*X_n_sup_shape)
+    X_n = get_coords(*X_n_shape)
+    X_m = get_coords(*X_m_shape)
     center = np.array([5, 5])
     init_guess_shifts = np.zeros((num_images*2))
     init_guess_angles = np.zeros(num_images)
@@ -248,7 +255,7 @@ if __name__ == '__main__':
     print('Estimating shift parameters')
     theta = init_guess_shifts
     res = minimize(compute_nll, theta,
-                   args=(X_n, X_m, Y_K, center, beta, X_n.shape, 4, init_guess_gamma, init_guess_angles),
+                   args=(X_n, X_n_sup, X_m, Y_K, center, beta, X_n_shape, 4, init_guess_gamma, init_guess_angles),
                    method='CG',
                    options=options)
     params = res.x
@@ -267,7 +274,7 @@ if __name__ == '__main__':
     print('Estimating shift, angle and PSF width parameters')
     theta = np.concatenate((estimated_shifts, [init_guess_gamma]))
     res = minimize(compute_nll, theta,
-                   args=(X_n, X_m, Y_K, center, beta, X_n.shape, 4, None, init_guess_angles),
+                   args=(X_n, X_n_sup, X_m, Y_K, center, beta, X_n_shape, 4, None, init_guess_angles),
                    method='CG',
                    options=options)
     params = res.x
