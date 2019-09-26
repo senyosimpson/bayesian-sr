@@ -60,6 +60,38 @@ def transform_mat(x_i, x_j, center, shift, angle, gamma=2):
     return out.T
 
 
+def transform_mat2(x_i, x_j, center, shift, angle, image_dims, upscale_factor=4, gamma=2, debug=False):
+    """ This is the transformation matrix that converts a high
+    resolution image into a low resolution image
+    In the paper this is denoted using W_ji
+    """
+    x_i_sum = np.sum(x_i ** 2, axis=1)  # .reshape(-1, 1)
+    u_j = psf_center(x_j, center, shift, angle)
+    u_j_sum = np.sum(u_j ** 2, axis=1).reshape(-1, 1)
+    dist = x_i_sum + u_j_sum - (2 * np.dot(u_j, x_i.T))
+    out = np.exp(-(dist / gamma ** 2))
+    out /= np.sum(out, axis=1).reshape(-1, 1)
+
+    # construct kernels
+    y, _ = out.shape
+    h, w = image_dims
+    x = (h + 4) * (w + 4)
+    W = np.zeros((y, x))
+
+    row, col = 0, 0
+    for idx, kernel in enumerate(out):
+        if idx % (w // upscale_factor) == 0 and idx > 0:
+            row += upscale_factor
+            col = 0
+        kernel = kernel.reshape(h, w)
+        kernel = np.pad(kernel, (2, 2))
+        new_kernel = np.zeros_like(kernel)
+        new_kernel[row:row+5, col:col+5] = kernel[row:row+5, col:col+5]
+        W[idx] = new_kernel.flatten()
+        col += upscale_factor
+    return W
+
+
 def psf_center(x_j, center, shift, angle):
     """ Used to calculate the center of the psf
     This is the vector u_j in the paper
@@ -167,7 +199,7 @@ if __name__ == '__main__':
     if seed:
         np.random.seed(seed)
 
-    hr_image = Image.open(image_path)
+    hr_image = Image.open(image_path).convert('L')
     # downsample image to make it faster to compute
     hr_image = hr_image.resize((300, 300), resample=Image.BICUBIC)
 
@@ -196,10 +228,14 @@ if __name__ == '__main__':
     Y_K.append(normalize(Y_k))
 
     for _ in range(num_images - 1):
-        xshift = np.random.randint(-2, 3)
-        yshift = np.random.randint(-2, 3)
+        #xshift = np.random.randint(-2, 3)
+        #yshift = np.random.randint(-2, 3)
+        xshift = 4 * np.random.random_sample() - 2
+        yshift = 4 * np.random.random_sample() - 2
         shifts.append([xshift, yshift])
-        angle = np.random.randint(-4, 5)
+        #angle = 8 * np.random.random_sample() - 4
+        angle = 0
+        #angle = np.random.randint(-4, 5)
         angles.append(angle)
         trans_mat = transform_mat(X_n, X_m, center, [xshift, yshift], angle, gamma=gamma)
         Y_k = np.dot(trans_mat, image).reshape(h_down, w_down)
@@ -225,8 +261,6 @@ if __name__ == '__main__':
                    args=(X_n, X_m, Y_K, center, beta, init_guess_gamma, init_guess_angles),
                    method='CG',
                    options=options)
-    print(res.success)
-    print(res.message)
     params = res.x
     estimated_shifts = params[:2*num_images]
 
@@ -236,8 +270,6 @@ if __name__ == '__main__':
                    args=(X_n, X_m, Y_K, center, beta, init_guess_gamma),
                    method='CG',
                    options=options)
-    print(res.success)
-    print(res.message)
     params = res.x
     estimated_shifts = params[:2*num_images]
     estimated_angles = params[2*num_images:2*num_images+num_images]
@@ -248,8 +280,6 @@ if __name__ == '__main__':
                    args=(X_n, X_m, Y_K, center, beta),
                    method='CG',
                    options=options)
-    print(res.success)
-    print(res.message)
     params = res.x
     estimated_shifts = np.array(params[:2*num_images]).reshape(-1, 2)
     estimated_angles = np.array(params[2*num_images:2*num_images+num_images])
