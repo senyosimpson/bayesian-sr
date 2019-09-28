@@ -46,36 +46,18 @@ def cov(x_i, x_j, r=1.0, a=0.04):
     return out
 
 
-def transform_mat(x_i, x_j, center, shift, angle, image_dims, upscale_factor=4, gamma=2):
+def transform_mat(x_i, x_j, center, shift, angle, gamma=2, upscale_factor=4):
     """ This is the transformation matrix that converts a high
     resolution image into a low resolution image
     In the paper this is denoted using W_ji
     """
     x_i_sum = np.sum(x_i ** 2, axis=1)
-    u_j = psf_center(x_j, center, shift, angle)
+    u_j = psf_center(x_j, center, shift, angle, upscale_factor)
     u_j_sum = np.sum(u_j ** 2, axis=1).reshape(-1, 1)
     dist = x_i_sum + u_j_sum - (2 * np.dot(u_j, x_i.T))
     out = np.exp(-(dist / gamma ** 2))
-
-    # construct kernels
-    y, _ = out.shape
-    h, w = image_dims
-    x = (h + 4) * (w + 4)
-    W = np.zeros((y, x))
-
-    row, col = 0, 0
-    for idx, kernel in enumerate(out):
-        if idx % (w // upscale_factor) == 0 and idx > 0:
-            row += upscale_factor
-            col = 0
-        kernel = kernel.reshape(h, w)
-        kernel = np.pad(kernel, (2, 2), mode='constant', constant_values=0)
-        new_kernel = np.zeros_like(kernel)
-        new_kernel[row:row+5, col:col+5] = kernel[row:row+5, col:col+5]
-        W[idx] = new_kernel.flatten()
-        col += upscale_factor
-    W /= np.sum(W, axis=1).reshape(-1, 1)
-    return W
+    out /= np.sum(out, axis=1).reshape(-1, 1)
+    return out
 
 
 def psf_center(x_j, center, shift, angle, upscale_factor=4):
@@ -136,13 +118,13 @@ def marginal_log_likelihood(Z_x, W_K, Y_K, beta, M, K):
     return likelihood
 
 
-def compute_nll(theta, X_n, X_n_sup, X_m, Y_K, center, beta, image_dims, upscale_factor=4, gamma=None, angles=None):
+def compute_nll(theta, X_n, X_m, Y_K, center, beta, upscale_factor=4, gamma=None, angles=None):
     """ Computes the negative marginal log likelihood """
     K = len(Y_K)
     M = len(X_m)
     var = 1 / beta
 
-    Z_x = cov(X_n_sup, X_n_sup) + var * np.eye(len(X_n_sup))
+    Z_x = cov(X_n, X_n) + var * np.eye(len(X_n))
 
     shifts = np.array(theta[:2*K]).reshape(-1, 2)
     # if angles are not given, fetch them from theta
@@ -152,7 +134,7 @@ def compute_nll(theta, X_n, X_n_sup, X_m, Y_K, center, beta, image_dims, upscale
     if gamma is None:
         gamma = theta[-1]
 
-    W_K = [transform_mat(X_n, X_m, center, shift, angle, image_dims, upscale_factor, gamma)
+    W_K = [transform_mat(X_n, X_m, center, shift, angle, upscale_factor=upscale_factor, gamma=gamma)
            for shift, angle in zip(shifts, angles)]
     W_K = np.array(W_K)
     nll = -marginal_log_likelihood(Z_x, W_K, Y_K, beta=beta, M=M, K=K)
@@ -203,7 +185,8 @@ if __name__ == '__main__':
 
     # generate LR images
     print('Generating reference LR image')
-    image = np.pad(hr_image, (2, 2), mode='constant', constant_values=0)
+    #image = np.pad(hr_image, (2, 2), mode='constant', constant_values=0)
+    image = np.asarray(hr_image)
     image = image.flatten().reshape(-1, 1)
     image = normalize(image)
 
@@ -215,7 +198,7 @@ if __name__ == '__main__':
     X_n = get_coords(h, w)
     X_m = get_coords(h_down, w_down)
 
-    trans_mat = transform_mat(X_n, X_m, center, [0, 0], 0, (h, w), gamma=gamma)
+    trans_mat = transform_mat(X_n, X_m, center, [0, 0], 0, gamma=gamma)  # (h, w), gamma=gamma)
     Y_k = np.dot(trans_mat, image).reshape(h_down, w_down)
     Y_k = Y_k[center_h-4:center_h+5, center_w-4:center_w+5].flatten()
     Y_k += var * np.random.randn(*Y_k.shape)
@@ -230,17 +213,15 @@ if __name__ == '__main__':
         angle = 0
         #angle = np.random.randint(-4, 5)
         angles.append(angle)
-        trans_mat = transform_mat(X_n, X_m, center, [xshift, yshift], angle, (h, w), gamma=gamma)
+        trans_mat = transform_mat(X_n, X_m, center, [xshift, yshift], angle, gamma=gamma)  # (h, w), gamma=gamma)
         Y_k = np.dot(trans_mat, image).reshape(h_down, w_down)
         Y_k = Y_k[center_h-4:center_h+5, center_w-4:center_w+5].flatten()
         Y_k += var * np.random.randn(*Y_k.shape)
         Y_K.append(normalize(Y_k))
 
     print('Starting parameter estimation')
-    X_n_sup_shape = (40, 40)
-    X_n_shape = (36, 36)
+    X_n_shape = (50, 50)
     X_m_shape = (9, 9)
-    X_n_sup = get_coords(*X_n_sup_shape)
     X_n = get_coords(*X_n_shape)
     X_m = get_coords(*X_m_shape)
     center = np.array([5, 5])
@@ -255,7 +236,7 @@ if __name__ == '__main__':
     print('Estimating shift parameters')
     theta = init_guess_shifts
     res = minimize(compute_nll, theta,
-                   args=(X_n, X_n_sup, X_m, Y_K, center, beta, X_n_shape, 4, init_guess_gamma, init_guess_angles),
+                   args=(X_n, X_m, Y_K, center, beta, 4, init_guess_gamma, init_guess_angles),
                    method='L-BFGS-B',
                    options=options)
     params = res.x
@@ -274,7 +255,7 @@ if __name__ == '__main__':
     print('Estimating shift, angle and PSF width parameters')
     theta = np.concatenate((estimated_shifts, [init_guess_gamma]))
     res = minimize(compute_nll, theta,
-                   args=(X_n, X_n_sup, X_m, Y_K, center, beta, X_n_shape, 4, None, init_guess_angles),
+                   args=(X_n, X_m, Y_K, center, beta, 4, None, init_guess_angles),
                    method='L-BFGS-B',
                    options=options)
     params = res.x
