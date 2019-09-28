@@ -56,7 +56,6 @@ def transform_mat(x_i, x_j, center, shift, angle, image_dims, upscale_factor=4, 
     u_j_sum = np.sum(u_j ** 2, axis=1).reshape(-1, 1)
     dist = x_i_sum + u_j_sum - (2 * np.dot(u_j, x_i.T))
     out = np.exp(-(dist / gamma ** 2))
-    out /= np.sum(out, axis=1).reshape(-1, 1)
 
     # construct kernels
     y, _ = out.shape
@@ -75,6 +74,7 @@ def transform_mat(x_i, x_j, center, shift, angle, image_dims, upscale_factor=4, 
         new_kernel[row:row+5, col:col+5] = kernel[row:row+5, col:col+5]
         W[idx] = new_kernel.flatten()
         col += upscale_factor
+    W /= np.sum(W, axis=1).reshape(-1, 1)
     return W
 
 
@@ -256,7 +256,7 @@ if __name__ == '__main__':
     theta = init_guess_shifts
     res = minimize(compute_nll, theta,
                    args=(X_n, X_n_sup, X_m, Y_K, center, beta, X_n_shape, 4, init_guess_gamma, init_guess_angles),
-                   method='CG',
+                   method='L-BFGS-B',
                    options=options)
     params = res.x
     estimated_shifts = params[:2*num_images]
@@ -275,7 +275,7 @@ if __name__ == '__main__':
     theta = np.concatenate((estimated_shifts, [init_guess_gamma]))
     res = minimize(compute_nll, theta,
                    args=(X_n, X_n_sup, X_m, Y_K, center, beta, X_n_shape, 4, None, init_guess_angles),
-                   method='CG',
+                   method='L-BFGS-B',
                    options=options)
     params = res.x
     estimated_shifts = np.array(params[:2*num_images]).reshape(-1, 2)
