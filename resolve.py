@@ -71,10 +71,9 @@ def psf_center(x_j, center, shift, angle, upscale_factor=4):
     rotation_matrix = np.array(rotation_matrix)
 
     u = np.dot(rotation_matrix, (x_j - center).T)
-    u = u.T + center
+    u = u.T + center + shift
     if upscale_factor:
         u = upscale_factor * u
-    u = u + shift
     return u
 
 
