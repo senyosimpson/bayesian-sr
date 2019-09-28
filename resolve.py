@@ -184,7 +184,6 @@ if __name__ == '__main__':
 
     # generate LR images
     print('Generating reference LR image')
-    #image = np.pad(hr_image, (2, 2), mode='constant', constant_values=0)
     image = np.asarray(hr_image)
     image = image.flatten().reshape(-1, 1)
     image = normalize(image)
@@ -197,7 +196,7 @@ if __name__ == '__main__':
     X_n = get_coords(h, w)
     X_m = get_coords(h_down, w_down)
 
-    trans_mat = transform_mat(X_n, X_m, center, [0, 0], 0, gamma=gamma)  # (h, w), gamma=gamma)
+    trans_mat = transform_mat(X_n, X_m, center, [0, 0], 0, gamma=gamma)
     Y_k = np.dot(trans_mat, image).reshape(h_down, w_down)
     Y_k = Y_k[center_h-4:center_h+5, center_w-4:center_w+5].flatten()
     Y_k += var * np.random.randn(*Y_k.shape)
@@ -212,7 +211,7 @@ if __name__ == '__main__':
         angle = 0
         #angle = np.random.randint(-4, 5)
         angles.append(angle)
-        trans_mat = transform_mat(X_n, X_m, center, [xshift, yshift], angle, gamma=gamma)  # (h, w), gamma=gamma)
+        trans_mat = transform_mat(X_n, X_m, center, [xshift, yshift], angle, gamma=gamma)
         Y_k = np.dot(trans_mat, image).reshape(h_down, w_down)
         Y_k = Y_k[center_h-4:center_h+5, center_w-4:center_w+5].flatten()
         Y_k += var * np.random.randn(*Y_k.shape)
@@ -236,7 +235,7 @@ if __name__ == '__main__':
     theta = init_guess_shifts
     res = minimize(compute_nll, theta,
                    args=(X_n, X_m, Y_K, center, beta, 4, init_guess_gamma, init_guess_angles),
-                   method='L-BFGS-B',
+                   method='CG',
                    options=options)
     params = res.x
     estimated_shifts = params[:2*num_images]
@@ -255,7 +254,7 @@ if __name__ == '__main__':
     theta = np.concatenate((estimated_shifts, [init_guess_gamma]))
     res = minimize(compute_nll, theta,
                    args=(X_n, X_m, Y_K, center, beta, 4, None, init_guess_angles),
-                   method='L-BFGS-B',
+                   method='CG',
                    options=options)
     params = res.x
     estimated_shifts = np.array(params[:2*num_images]).reshape(-1, 2)
