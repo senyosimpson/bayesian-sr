@@ -2,6 +2,7 @@ import argparse
 import numpy as np
 from PIL import Image
 from scipy.optimize import minimize
+import skimage.io as skio
 
 
 # helper functions
@@ -140,6 +141,34 @@ def compute_nll(theta, X_n, X_m, Y_K, center, beta, upscale_factor=4, gamma=None
     return nll
 
 
+def compute_posterior(x, X_n, X_m, Y_K, beta, shifts, angles, gamma, upscale_factor=4):
+    M = len(Y_K[0])
+    var = 1 / beta
+
+    W_K = [transform_mat(X_n, X_m, center, shift, angle, upscale_factor=upscale_factor, gamma=gamma)
+           for shift, angle in zip(shifts, angles)]
+    W_K = np.array(W_K)
+
+    Z_x = cov(X_n, X_n) + var * np.eye(len(X_n))
+    Z_x_sign, Z_x_logdet = np.linalg.slogdet(Z_x)
+    prior = (Z_x_sign * Z_x_logdet) + np.dot(np.dot(x.T, np.linalg.inv(Z_x)), x) + (M * np.log(2*np.pi))
+    prior = -0.5 * prior
+
+    likelihood = 0
+    for w, y in zip(W_K, Y_K):
+        y = y.reshape(-1, 1)
+        y_sum = np.sum(y ** 2, axis=0)
+        w_x = np.dot(w, x)
+        w_x_sum = np.sum(w_x ** 2, axis=0)
+        likelihood += y_sum + w_x_sum - (2 * np.dot(y.flatten(), w_x.flatten()))
+        likelihood = likelihood[0]
+    likelihood *= beta
+    likelihood -= M * np.log(beta/(2*np.pi))
+    likelihood *= -0.5
+    posterior = prior + likelihood
+    return posterior
+
+
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     parser.add_argument('--image-path',
@@ -226,6 +255,8 @@ if __name__ == '__main__':
     init_guess_shifts = np.zeros((num_images*2))
     init_guess_angles = np.zeros(num_images)
     init_guess_gamma = 4
+    shift_bounds = [(-2, 2) for _ in range(num_images*2)]
+    gamma_bounds = (1, None)
     options = {
         'disp': True,
         'maxiter': max_iters
@@ -233,9 +264,11 @@ if __name__ == '__main__':
 
     print('Estimating shift parameters')
     theta = init_guess_shifts
+    bounds = shift_bounds
     res = minimize(compute_nll, theta,
                    args=(X_n, X_m, Y_K, center, beta, 4, init_guess_gamma, init_guess_angles),
-                   method='CG',
+                   method='L-BFGS-B',
+                   bounds=bounds,
                    options=options)
     params = res.x
     estimated_shifts = params[:2*num_images]
@@ -252,6 +285,7 @@ if __name__ == '__main__':
 
     print('Estimating shift, angle and PSF width parameters')
     theta = np.concatenate((estimated_shifts, [init_guess_gamma]))
+    bounds = np.concatenate((shift_bounds, [gamma_bounds]))
     res = minimize(compute_nll, theta,
                    args=(X_n, X_m, Y_K, center, beta, 4, None, init_guess_angles),
                    method='CG',
@@ -269,3 +303,16 @@ if __name__ == '__main__':
     print('Estimated Gamma:', estimated_gamma)
 
     print('Estimating high resolution image')
+    X_n = get_coords(h, w)
+    X_m = get_coords(h_down, w_down)
+    x = np.random.rand(h, w)
+    x = 0.5 * (2 * x - 1)
+    
+    res = minimize(compute_posterior, theta,
+                   args=(x, X_n, X_m, Y_K, beta, shifts, init_guess_angles, gamma),
+                   method='CG',
+                   options=options)
+
+    x = res.x
+    x = np.array(x).reshape(*X_n_shape)
+    skio.imsave('artifacts/out.png', x)
