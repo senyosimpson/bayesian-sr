@@ -2,10 +2,10 @@
 FROM ubuntu:latest
 ENV PYTHONUNBUFFERED 1
 
-COPY requirements.txt /
-
 RUN apt update && apt install -y python3-pip
 RUN pip3 install --upgrade pip
+
+COPY requirements.txt /
 RUN pip3 install -r requirements.txt
 
 ENTRYPOINT ["/bin/sh", "-c"]
