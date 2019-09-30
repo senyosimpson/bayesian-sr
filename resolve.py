@@ -27,12 +27,35 @@ def normalize(image):
     return 0.5 * (2 * (image-np.min(image))/(np.max(image)-np.min(image)) - 1)
 
 
-def get_parameters(params, K):
-    """ Gets the estimated parameters from results """
-    shifts = np.array(params[:2*K]).reshape(-1, 2)
-    angles = np.array(params[2*K:2*K+K])
-    gamma = params[-1]
-    return shifts, angles, gamma
+def generate_lr_images(hr_image, num_images, borders, var, gamma=2):
+    x_start, x_end, y_start, y_end = borders
+    shifts = [(0, 0)]  # store for comparison
+    shifts.extend([(np.random.randint(-2, 3), np.random.randint(-2, 3)) for _ in range(num_images - 1)])
+    angles = [0]  # store for comparison
+    angles.extend([0 for _ in range(num_images - 1)])  # angle = np.random.randint(-4, 5)
+    Y_K = []
+
+    image = np.asarray(hr_image)
+    image = image.flatten().reshape(-1, 1)
+    image = normalize(image)
+
+    w, h = hr_image.size
+    w_down, h_down = w//4, h//4
+    center_h, center_w = int(np.ceil(h_down/2)), int(np.ceil(w_down/2))
+    center = np.array([center_h, center_w])
+
+    X_n = get_coords(h, w)
+    X_m = get_coords(h_down, w_down)
+
+    for idx, (shift, angle) in enumerate(zip(shifts, angles)):
+        print('Generating low resolution image %d/%d' % (idx+1, num_images))
+        trans_mat = transform_mat(X_n, X_m, center, shift, angle, gamma=gamma)
+        Y_k = np.dot(trans_mat, image).reshape(h_down, w_down)
+        Y_k = Y_k[center_h-y_start:center_h+y_end, center_w-x_start:center_w+x_end].flatten()
+        Y_k += var * np.random.randn(*Y_k.shape)
+        Y_K.append(normalize(Y_k))
+
+    return Y_K
 
 
 # building blocks
@@ -142,7 +165,7 @@ def compute_nll(theta, X_n, X_m, Y_K, center, beta, upscale_factor=4, gamma=None
     return nll
 
 
-def compute_posterior(x, X_n, X_m, Y_K, beta, shifts, angles, gamma, upscale_factor=4):
+def compute_posterior(x, X_n, X_m, Y_K, beta, center, shifts, angles, gamma, upscale_factor=4):
     M = len(Y_K[0])
     var = 1 / beta
 
@@ -168,6 +191,7 @@ def compute_posterior(x, X_n, X_m, Y_K, beta, shifts, angles, gamma, upscale_fac
     likelihood -= M * np.log(beta/(2*np.pi))
     likelihood *= -0.5
     posterior = prior + likelihood
+    print(posterior)
     return posterior
 
 
@@ -211,49 +235,17 @@ if __name__ == '__main__':
     gamma = 2
     shifts = [[0, 0]]  # store for comparison
     angles = [0]  # store for comparison
-    Y_K = []
-
-    # generate LR images
-    print('Generating reference LR image')
-    image = np.asarray(hr_image)
-    image = image.flatten().reshape(-1, 1)
-    image = normalize(image)
-
-    w, h = hr_image.size
-    w_down, h_down = w//4, h//4
-    center = np.array([h_down//2, w_down//2])
-    center_h, center_w = center
-
-    X_n = get_coords(h, w)
-    X_m = get_coords(h_down, w_down)
-
-    trans_mat = transform_mat(X_n, X_m, center, [0, 0], 0, gamma=gamma)
-    Y_k = np.dot(trans_mat, image).reshape(h_down, w_down)
-    Y_k = Y_k[center_h-4:center_h+5, center_w-4:center_w+5].flatten()
-    Y_k += var * np.random.randn(*Y_k.shape)
-    Y_K.append(normalize(Y_k))
-
-    for idx in range(num_images - 1):
-        print('Generating low resolution image %d/%d' % (idx+1, num_images-1))
-        xshift = np.random.randint(-2, 3)
-        yshift = np.random.randint(-2, 3)
-        shifts.append([xshift, yshift])
-        #angle = 8 * np.random.random_sample() - 4
-        angle = 0
-        #angle = np.random.randint(-4, 5)
-        angles.append(angle)
-        trans_mat = transform_mat(X_n, X_m, center, [xshift, yshift], angle, gamma=gamma)
-        Y_k = np.dot(trans_mat, image).reshape(h_down, w_down)
-        Y_k = Y_k[center_h-4:center_h+5, center_w-4:center_w+5].flatten()
-        Y_k += var * np.random.randn(*Y_k.shape)
-        Y_K.append(normalize(Y_k))
+    Y_K = generate_lr_images(hr_image, num_images, (4, 5, 4, 5), var)
 
     print('Starting parameter estimation')
-    X_n_shape = (50, 50)
-    X_m_shape = (9, 9)
+    h, w = 50, 50
+    h_down, w_down = 9, 9
+    X_n_shape = (h, w)
+    X_m_shape = (h_down, w_down)
     X_n = get_coords(*X_n_shape)
     X_m = get_coords(*X_m_shape)
-    center = np.array([5, 5])
+    center_h, center_w = int(np.ceil(h_down/2)), int(np.ceil(w_down/2))
+    center = np.array([center_h, center_w])
     init_guess_shifts = np.zeros((num_images*2))
     init_guess_angles = np.zeros(num_images)
     init_guess_gamma = 4
@@ -303,16 +295,22 @@ if __name__ == '__main__':
     print('Estimated Gamma:', estimated_gamma)
 
     print('Estimating high resolution image')
+    h, w = 60, 60
+    h_down, w_down = h//4, w//4
+    center_h, center_w = int(np.ceil(h_down/2)), int(np.ceil(w_down/2))
+    center = np.array([center_h, center_w])
+
     X_n = get_coords(h, w)
     X_m = get_coords(h_down, w_down)
-    x = np.random.rand(h, w)
-    x = 0.5 * (2 * x - 1)
+
+    Y_K = generate_lr_images(hr_image, num_images, (7, 8, 7, 8), var)
+    x = np.random.rand(h, w).flatten()
+    x = normalize(x)
     
-    res = minimize(compute_posterior, theta,
-                   args=(x, X_n, X_m, Y_K, beta, shifts, init_guess_angles, gamma),
+    res = minimize(compute_posterior, x,
+                   args=(X_n, X_m, Y_K, beta, center, estimated_shifts, init_guess_angles, estimated_gamma),
                    method='CG',
                    options=options)
-
-    x = res.x
-    x = np.array(x).reshape(*X_n_shape)
-    skio.imsave('artifacts/out.png', x)
+    estimated_image = res.x
+    estimated_image = np.array(estimated_image).reshape(h, w)
+    skio.imsave('/artifacts/out.png', estimated_image)
