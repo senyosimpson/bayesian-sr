@@ -72,9 +72,10 @@ def psf_center(x_j, center, shift, angle, upscale_factor=4):
     rotation_matrix = np.array(rotation_matrix)
 
     u = np.dot(rotation_matrix, (x_j - center).T)
-    u = u.T + center + shift
+    u = u.T + center
     if upscale_factor:
         u = upscale_factor * u
+    u = u + shift
     return u
 
 
@@ -151,7 +152,8 @@ def compute_posterior(x, X_n, X_m, Y_K, beta, shifts, angles, gamma, upscale_fac
 
     Z_x = cov(X_n, X_n) + var * np.eye(len(X_n))
     Z_x_sign, Z_x_logdet = np.linalg.slogdet(Z_x)
-    prior = (Z_x_sign * Z_x_logdet) + np.dot(np.dot(x.T, np.linalg.inv(Z_x)), x) + (M * np.log(2*np.pi))
+    k = len(W_K[0])
+    prior = (Z_x_sign * Z_x_logdet) + np.dot(np.dot(x.T, np.linalg.inv(Z_x)), x) + (k * np.log(2*np.pi))
     prior = -0.5 * prior
 
     likelihood = 0
@@ -264,11 +266,9 @@ if __name__ == '__main__':
 
     print('Estimating shift parameters')
     theta = init_guess_shifts
-    bounds = shift_bounds
     res = minimize(compute_nll, theta,
                    args=(X_n, X_m, Y_K, center, beta, 4, init_guess_gamma, init_guess_angles),
-                   method='L-BFGS-B',
-                   bounds=bounds,
+                   method='CG',
                    options=options)
     params = res.x
     estimated_shifts = params[:2*num_images]
