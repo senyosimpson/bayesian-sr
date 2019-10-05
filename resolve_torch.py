@@ -31,32 +31,38 @@ def normalize(image):
     return image
 
 
-def generate_lr_images(hr_image, num_images, borders, var, gamma=2, return_all=True):
+def generate_lr_images(hr_image, num_images, borders, var, gamma=2, shifts=None, angles=None, return_all=True):
     x_start, x_end, y_start, y_end = borders
-    shifts = [(0, 0)]  # store for comparison
-    shifts.extend([(np.random.randint(-2, 3), np.random.randint(-2, 3)) for _ in range(num_images - 1)])
-    angles = [0]  # store for comparison
-    angles.extend([0 for _ in range(num_images - 1)])  # angle = np.random.randint(-4, 5)
+    if shifts is None:
+        shifts = [(0., 0.)]  # store for comparison
+        shifts.extend([(float(np.random.randint(-2, 3)), float(np.random.randint(-2, 3))) for _ in range(num_images - 1)])
+        shifts = torch.tensor(shifts).to(torch.device('cuda'))
+    if angles is None:
+        angles = [0.]  # store for comparison
+        angles.extend([0. for _ in range(num_images - 1)])  # angle = np.random.randint(-4, 5)
+        angles = torch.tensor(angles).to(torch.device('cuda'))
     Y_K = []
 
     image = np.asarray(hr_image)
+    image = torch.tensor(image).to(torch.device('cuda'))
     image = image.flatten().reshape(-1, 1)
     image = normalize(image)
 
-    w, h = hr_image.size
+    h, w = hr_image.shape
     w_down, h_down = w//4, h//4
-    center_h, center_w = int(np.ceil(h_down/2)), int(np.ceil(w_down/2))
-    center = np.array([center_h, center_w])
+    center_h, center_w = float(np.ceil(h_down/2)), float(np.ceil(w_down/2))
+    center = torch.tensor([center_h, center_w]).to(device)
+    center_h_down, center_w_down = int(np.ceil(h_down/2)), int(np.ceil(w_down/2))
 
-    X_n = get_coords(h, w)
-    X_m = get_coords(h_down, w_down)
+    X_n = get_coords(h, w).to(torch.device('cuda'))
+    X_m = get_coords(h_down, w_down).to(torch.device('cuda'))
 
     for idx, (shift, angle) in enumerate(zip(shifts, angles)):
         print('Generating low resolution image %d/%d' % (idx+1, num_images))
-        trans_mat = transform_mat(X_n, X_m, center, shift, angle, gamma=gamma)
-        Y_k = np.dot(trans_mat, image).reshape(h_down, w_down)
-        Y_k = Y_k[center_h-y_start:center_h+y_end, center_w-x_start:center_w+x_end].flatten()
-        Y_k += var * np.random.randn(*Y_k.shape)
+        trans_mat = transform_mat(X_n, X_m, center, shift, angle, gamma=gamma).to(torch.device('cuda'))
+        Y_k = torch.mm(trans_mat, image).reshape(h_down, w_down).to(torch.device('cuda'))
+        Y_k = Y_k[center_h_down-y_start:center_h_down+y_end, center_w_down-x_start:center_w_down+x_end].flatten()
+        Y_k += var * torch.randn(*Y_k.shape).to(torch.device('cuda'))
         Y_K.append(normalize(Y_k))
 
     if return_all:
@@ -164,6 +170,34 @@ def compute_nll(shifts, gamma, angles, X_n, X_m, Y_K, center, beta, upscale_fact
     return nll
 
 
+def compute_posterior(x, X_n, X_m, Y_K, beta, center, shifts, angles, gamma, upscale_factor=4):
+    M = len(Y_K[0])
+    var = 1 / beta
+
+    W_K = [transform_mat(X_n, X_m, center, shift, angle, upscale_factor=upscale_factor, gamma=gamma)
+           for shift, angle in zip(shifts, angles)]
+
+    Z_x = cov(X_n, X_n) + var * torch.eye(len(X_n)).to(torch.device('cuda'))
+    k = len(W_K[0])
+    prior = torch.logdet(Z_x) + torch.mm(torch.mm(x.t(), torch.inverse(Z_x)), x)
+    prior = prior + k * torch.log(torch.tensor(2 * np.pi).to(torch.device('cuda')))
+    prior = -0.5 * prior
+
+    likelihood = torch.tensor(0.).to(torch.device('cuda'))
+    for w, y in zip(W_K, Y_K):
+        y = y.reshape(-1, 1)
+        y_sum = torch.sum(y ** 2, dim=0)
+        w_x = torch.mm(w, x)
+        w_x_sum = torch.sum(w_x ** 2, dim=0)
+        likelihood = likelihood + (y_sum + w_x_sum).squeeze() - (2 * torch.dot(y.flatten(), w_x.flatten()))
+    likelihood = beta * likelihood
+    likelihood = likelihood - M * torch.log(beta / (2 * np.pi))
+    likelihood = -0.5 * likelihood
+    posterior = prior + likelihood
+    posterior = -1 * posterior
+    return posterior
+
+
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     parser.add_argument('--image-path',
@@ -184,7 +218,7 @@ if __name__ == '__main__':
                         type=int,
                         required=False,
                         default=4,
-                        help='the upscaling factor')
+                        help='the image upscaling factor')
     parser.add_argument('--seed',
                         type=int,
                         default=42,
@@ -207,122 +241,87 @@ if __name__ == '__main__':
 
     hr_image = io.imread(image_path)
     hr_image = color.rgb2gray(hr_image)
-    hr_image = transform.resize(hr_image, (200, 200), anti_aliasing=True)
+    hr_image = transform.resize(hr_image, (100, 100), anti_aliasing=True)
 
-    # set initial image and params
+    # Set params
     beta = 1 / (0.05 ** 2)
     var = 1 / beta
     beta = torch.tensor(beta).to(device)
     var = torch.tensor(var).to(device)
     gamma = torch.tensor(2.).to(device)
-    shifts = [torch.tensor([0., 0.]).to(device)]  # store for comparison
-    angles = [torch.tensor(0.).to(device)]  # store for comparison
-    Y_K = []
 
-    # generate LR images
-    print('Generating reference LR image')
-    image = np.asarray(hr_image)
-    image = torch.tensor(image).to(device)
-    image = image.flatten().reshape(-1, 1)
-    image = normalize(image)
-
-    h, w = hr_image.shape
-    w_down, h_down = w//4, h//4
-    center_h, center_w = float(np.ceil(h_down/2)), float(np.ceil(w_down/2))
-    center = torch.tensor([center_h, center_w]).to(device)
-    center_h_down, center_w_down = int(np.ceil(h_down/2)), int(np.ceil(w_down/2))
-
-    X_n = get_coords(h, w).to(device)
-    X_m = get_coords(h_down, w_down)
-    X_m = X_m.to(device)
-
-    shift = torch.tensor([0., 0.]).to(device)
-    angle = torch.tensor(0.).to(device)
-    trans_mat = transform_mat(X_n, X_m, center, shift, angle, gamma=gamma).to(device)
-    Y_k = torch.mm(trans_mat, image).reshape(h_down, w_down).to(device)
-    Y_k = Y_k[center_h_down-4:center_h_down+5, center_w_down-4:center_w_down+5].flatten()
-    Y_k += var * torch.randn(*Y_k.shape).to(device)
-    Y_K.append(normalize(Y_k))
-
-    for idx in range(num_images - 1):
-        print('Generating low resolution image %d/%d' % (idx+1, num_images-1))
-        xshift = float(np.random.randint(-2, 3))
-        yshift = float(np.random.randint(-2, 3))
-        shift = torch.tensor([xshift, yshift]).to(device)
-        shifts.append(shift)
-        #angle = 8 * np.random.random_sample() - 4
-        #angle = float(np.random.randint(-4, 5))
-        angle = torch.tensor(0.).to(device)
-        #angle = np.random.randint(-4, 5)
-        angles.append(angle)
-        trans_mat = transform_mat(X_n, X_m, center, shift, angle, gamma=gamma).to(device)
-        Y_k = torch.mm(trans_mat, image).reshape(h_down, w_down)
-        Y_k = Y_k[center_h_down-4:center_h_down+5, center_w_down-4:center_w_down+5].flatten()
-        Y_k += var * torch.randn(*Y_k.shape).to(device)
-        Y_K.append(normalize(Y_k))
+    # Get LR images
+    Y_K, shifts, angles = generate_lr_images(hr_image, num_images, (7, 8, 7, 8), var, gamma)
+    shifts = shifts.to(device)
+    angles = angles.to(device)
 
     print('Starting parameter estimation')
-    X_n_shape = (36, 36)
-    X_m_shape = (9, 9)
-    X_n = get_coords(*X_n_shape).to(device)
-    X_m = get_coords(*X_m_shape).to(device)
-    center = torch.tensor([5., 5.]).to(device)
+    h, w = 75, 75
+    h_down, w_down = 15, 15
+    center_h, center_w = float(np.ceil(h_down/2)), float(np.ceil(w_down/2))
+    center = torch.tensor([center_h, center_w]).to(device)
+
+    X_n = get_coords(h, w).to(device)
+    bias = torch.tensor([8., 8.])
+    X_m = get_coords(h_down, w_down) + bias
+    X_m = X_m.to(device)
 
     init_guess_shifts = torch.zeros((num_images, 2)).to(device)
     init_guess_angles = torch.zeros(num_images).to(device)
     init_guess_gamma = torch.tensor(4.).to(device)
 
-    print('Estimating shift parameters')
+    print('Estimating shift parameters and PSF width parameter')
     init_guess_shifts.requires_grad = True
-    #init_guess_gamma.requires_grad = True
-    optimizer = torch.optim.Adam([init_guess_shifts], lr=0.005)
-    losses = []
-    num_steps = 1500
+    init_guess_gamma.requires_grad = True
+    optimizer = torch.optim.Adam([init_guess_shifts, init_guess_gamma], lr=0.005)
+    num_steps = 500
     for i in range(num_steps):
         print('Step %d/%d' % (i+1, num_steps))
         optimizer.zero_grad()
         loss = compute_nll(init_guess_shifts, init_guess_gamma, angles, X_n, X_m, Y_K, center, beta, 4)
         loss.backward()
         optimizer.step()
-        losses.append(loss.item())
         print('Current loss %.5f' % loss.item())
 
     # log results
-    estimated_shifts = init_guess_shifts
-    for shift, est_shift in zip(shifts, estimated_shifts):
-        print('Original Shift:', shift)
-        print('Estimated Shift:', est_shift)
-        print()
-
-    # print('Estimating shift and angle parameters')
-    # theta = np.concatenate((estimated_shifts, init_guess_angles))
-    # res = minimize(compute_nll, theta,
-    #                args=(X_n, X_m, Y_K, center, beta, init_guess_gamma),
-    #                method='CG',
-    #                options=options)
-    # params = res.x
-    # estimated_shifts = params[:2*num_images]
-    # estimated_angles = params[2*num_images:2*num_images+num_images]
-
-    print('Refining shift parameters and estimating PSF width parameter')
-    init_guess_gamma.requires_grad = True
-    optimizer = torch.optim.Adam([estimated_shifts, init_guess_gamma], lr=0.005)
-    num_steps = 1500
-    for i in range(num_steps):
-        optimizer.zero_grad()
-        loss = compute_nll(estimated_shifts, init_guess_gamma, angles, X_n, X_m, Y_K, center, beta, 4)
-        loss.backward()
-        optimizer.step()
-        losses.append(loss.item())
-
-    # log results
+    estimated_shifts = torch.round(init_guess_shifts)
     estimated_gamma = init_guess_gamma
     for shift, est_shift in zip(shifts, estimated_shifts):
         print('Original Shift:', shift)
         print('Estimated Shift:', est_shift)
         print()
-
     print('Original Gamma:', gamma)
     print('Estimated Gamma:', estimated_gamma)
 
     print('Estimating high resolution image')
+    # Generate new set of LR images with different dimensions but same shifts and angles
+    Y_K = generate_lr_images(hr_image, num_images, (100, 100, 100, 100), var, gamma, shifts, angles, return_all=False)
+    h, w = 100, 100
+    h_down, w_down = 25, 25
+    center_h, center_w = float(np.ceil(h_down/2)), float(np.ceil(w_down/2))
+    center = torch.tensor([center_h, center_w]).to(device)
+
+    X_n = get_coords(h, w).to(device)
+    X_m = get_coords(h_down, w_down).to(device)
+
+    # need to use the estimated shifts and estimated gamma to construct the images
+    #Y_K = generate_lr_images(hr_image, num_images, (7, 8, 7, 8), var)
+    est_hr_image = torch.rand(h, w).reshape(-1, 1).to(device)
+    est_hr_image = normalize(est_hr_image)
+
+    estimated_shifts.requires_grad = False
+    estimated_gamma.requires_grad = False
+    est_hr_image.requires_grad = True
+    optimizer = torch.optim.Adam([est_hr_image], lr=0.005)
+    num_steps = 1000
+    for i in range(num_steps):
+        print('Step %d/%d' % (i+1, num_steps))
+        optimizer.zero_grad()
+        loss = compute_posterior(est_hr_image, X_n, X_m, Y_K, beta, center, estimated_shifts, angles, estimated_gamma)
+        loss.backward()
+        optimizer.step()
+        print('Current loss %.5f' % loss.item())
+
+    est_hr_image = est_hr_image.reshape(h, w)
+    est_hr_image = est_hr_image.cpu().detach().numpy()
+    io.imsave('/artifacts/out.png', est_hr_image)
