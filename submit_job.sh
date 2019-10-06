@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 gradient jobs create \
---name "$0" \
---container ${CONTAINER_NAME} \
+--name "$1" \
+--container ${CONTAINER_NAME_BAYES} \
 --registryUsername ${DOCKERHUB_USERNAME} \
 --registryPassword ${DOCKERHUB_PASSWORD} \
---machineType "G12" \
+--machineType "P6000" \
 --command "./resolve.sh"
