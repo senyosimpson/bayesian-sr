@@ -230,7 +230,7 @@ if __name__ == '__main__':
 
     if seed:
         np.random.seed(seed)
-        #torch.manual_seed(seed)
+        torch.manual_seed(seed)
 
     hr_image = io.imread(image_path)
     hr_image = color.rgb2gray(hr_image)
@@ -297,12 +297,10 @@ if __name__ == '__main__':
     X_n = get_coords(h, w).to(device)
     X_m = get_coords(h_down, w_down).to(device)
 
-    est_hr_image = torch.rand(h, w).reshape(-1, 1).to(device)
-    est_hr_image = normalize(est_hr_image)
-
+    est_hr_image = torch.zeros(h, w).reshape(-1, 1).to(device)
     est_hr_image.requires_grad = True
     optimizer = torch.optim.Adam([est_hr_image], lr=0.005)
-    num_steps = 2000
+    num_steps = 600
     for idx in range(num_steps):
         print('Step %d/%d' % (idx+1, num_steps))
         optimizer.zero_grad()
