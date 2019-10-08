@@ -7,10 +7,10 @@ from skimage import color
 
 
 # helper functions
-def get_coords(height, width):
+def get_coords(height, width, space=1):
     coords = []
-    for h in range(height):
-        for w in range(width):
+    for h in range(0, height, space):
+        for w in range(0, width, space):
             coords.append([float(h), float(w)])
     return torch.tensor(coords)
 
@@ -38,7 +38,7 @@ def generate_lr_images(hr_image, num_images, borders, var, gamma=2, shifts=None,
         shifts = torch.tensor(shifts).to(torch.device('cuda'))
     if angles is None:
         angles = [0.]  # store for comparison
-        angles.extend([0. for _ in range(num_images - 1)])  # angle = np.random.randint(-4, 5)
+        angles.extend([np.random.randint(-4, 5) for _ in range(num_images - 1)])  # angle = np.random.randint(-4, 5)
         angles = torch.tensor(angles).to(torch.device('cuda'))
     Y_K = []
 
@@ -49,12 +49,12 @@ def generate_lr_images(hr_image, num_images, borders, var, gamma=2, shifts=None,
 
     h, w = hr_image.shape
     w_down, h_down = w//4, h//4
-    center_h, center_w = float(np.ceil(h_down/2)), float(np.ceil(w_down/2))
+    center_h, center_w = float(np.ceil(h/2)), float(np.ceil(w/2))
     center = torch.tensor([center_h, center_w]).to(device)
     center_h_down, center_w_down = int(np.ceil(h_down/2)), int(np.ceil(w_down/2))
 
     X_n = get_coords(h, w).to(torch.device('cuda'))
-    X_m = get_coords(h_down, w_down).to(torch.device('cuda'))
+    X_m = get_coords(h, w, space=4).to(torch.device('cuda'))
 
     for idx, (shift, angle) in enumerate(zip(shifts, angles)):
         print('Generating low resolution image %d/%d' % (idx+1, num_images))
@@ -81,13 +81,13 @@ def cov(x_i, x_j, r=1.0, a=0.04):
     return out
 
 
-def transform_mat(x_i, x_j, center, shift, angle, gamma=2, upscale_factor=4):
+def transform_mat(x_i, x_j, center, shift, angle, gamma=2):
     """ This is the transformation matrix that converts a high
     resolution image into a low resolution image
     In the paper this is denoted using W_ji
     """
     x_i_sum = torch.sum(x_i ** 2, dim=1)
-    u_j = psf_center(x_j, center, shift, angle, upscale_factor)
+    u_j = psf_center(x_j, center, shift, angle)
     u_j_sum = torch.sum(u_j ** 2, dim=1).reshape(-1, 1)
     dist = x_i_sum + u_j_sum - (2 * torch.mm(u_j, x_i.t()))
     out = torch.exp(-(dist / gamma ** 2))
@@ -95,21 +95,20 @@ def transform_mat(x_i, x_j, center, shift, angle, gamma=2, upscale_factor=4):
     return out
 
 
-def psf_center(x_j, center, shift, angle, upscale_factor=4):
+def psf_center(x_j, center, shift, angle):
     """ Used to calculate the center of the psf
     This is the vector u_j in the paper
     """
-    #angle = np.radians(angle)
-    rotation_matrix = [
-        [torch.cos(angle), torch.sin(angle)],
-        [-torch.sin(angle), torch.cos(angle)]]
-    rotation_matrix = torch.tensor(rotation_matrix).to(torch.device('cuda'))
+    angle = (np.pi / 180.) * angle
+    rotation_matrix = torch.zeros(2, 2)
+    rotation_matrix[0, 0] = torch.cos(angle)
+    rotation_matrix[0, 1] = torch.sin(angle)
+    rotation_matrix[1, 0] = -torch.sin(angle)
+    rotation_matrix[1, 1] = torch.cos(angle)
+    rotation_matrix = rotation_matrix.to(torch.device('cuda'))
 
     u = torch.mm(rotation_matrix, (x_j - center).t())
-    u = u.t() + center  # + shift
-    if upscale_factor:
-        u = u * upscale_factor
-    u = u + shift
+    u = u.t() + center + shift
     return u
 
 
@@ -150,7 +149,7 @@ def marginal_log_likelihood(Z_x, W_K, Y_K, beta, M, K):
     return likelihood
 
 
-def compute_nll(shifts, gamma, angles, X_n, X_m, Y_K, center, beta, upscale_factor=4):
+def compute_nll(shifts, angles, gamma, X_n, X_m, Y_K, center, beta):
     """ Computes the negative marginal log likelihood """
     K = len(Y_K)
     M = len(X_m)
@@ -158,22 +157,17 @@ def compute_nll(shifts, gamma, angles, X_n, X_m, Y_K, center, beta, upscale_fact
 
     Z_x = cov(X_n, X_n) + var * torch.eye(len(X_n)).to(torch.device('cuda'))
 
-    # if angles are not given, fetch them from theta
-    #if angles is None:
-    #    angles = theta[2*K:2*K+K]
-    # if gamma is not given, fetch it from theta
-
-    W_K = [transform_mat(X_n, X_m, center, shift, angle, upscale_factor=upscale_factor, gamma=gamma)
+    W_K = [transform_mat(X_n, X_m, center, shift, angle, gamma=gamma)
            for shift, angle in zip(shifts, angles)]
     nll = -marginal_log_likelihood(Z_x, W_K, Y_K, beta=beta, M=M, K=K)
     return nll
 
 
-def compute_posterior(x, X_n, X_m, Y_K, beta, center, shifts, angles, gamma, upscale_factor=4):
+def compute_posterior(x, X_n, X_m, Y_K, beta, center, shifts, angles, gamma):
     M = len(Y_K[0])
     var = 1 / beta
 
-    W_K = [transform_mat(X_n, X_m, center, shift, angle, upscale_factor=upscale_factor, gamma=gamma)
+    W_K = [transform_mat(X_n, X_m, center, shift, angle, gamma=gamma)
            for shift, angle in zip(shifts, angles)]
 
     Z_x = cov(X_n, X_n) + var * torch.eye(len(X_n)).to(torch.device('cuda'))
@@ -250,38 +244,43 @@ if __name__ == '__main__':
 
     print('Starting parameter estimation')
     h, w = 75, 75
-    h_down, w_down = 15, 15
-    center_h, center_w = float(np.ceil(h_down/2)), float(np.ceil(w_down/2))
+    h_down, w_down = 60, 60
+    center_h, center_w = float(np.ceil(h/2)), float(np.ceil(w/2))
     center = torch.tensor([center_h, center_w]).to(device)
 
     X_n = get_coords(h, w).to(device)
-    X_m = get_coords(h_down, w_down).to(device)
+    X_m = get_coords(h_down, w_down, space=4).to(device)
 
     init_guess_shifts = torch.zeros((num_images, 2)).to(device)
     init_guess_angles = torch.zeros(num_images).to(device)
     init_guess_gamma = torch.tensor(4.).to(device)
 
-    print('Estimating shift parameters and PSF width parameter')
+    print('Estimating shift parameters, angle parameters and PSF width parameter')
     init_guess_shifts.requires_grad = True
     init_guess_gamma.requires_grad = True
-    optimizer = torch.optim.Adam([init_guess_shifts, init_guess_gamma], lr=0.005)
-    num_steps = 500
+    init_guess_angles.requires_grad = True
+    optimizer = torch.optim.Adam([init_guess_shifts, init_guess_angles, init_guess_gamma], lr=0.005)
+    num_steps = 1000
     for i in range(num_steps):
         print('Step %d/%d' % (i+1, num_steps))
         optimizer.zero_grad()
-        loss = compute_nll(init_guess_shifts, init_guess_gamma, angles, X_n, X_m, Y_K, center, beta, 4)
+        loss = compute_nll(init_guess_shifts, init_guess_angles, init_guess_gamma, X_n, X_m, Y_K, center, beta)
         loss.backward()
         optimizer.step()
         print('Current loss %.5f' % loss.item())
 
     init_guess_shifts.requires_grad = False
+    init_guess_angles.requires_grad = False
     init_guess_gamma.requires_grad = False
     # log results
     estimated_shifts = init_guess_shifts
+    estimated_angles = init_guess_angles
     estimated_gamma = init_guess_gamma
-    for shift, est_shift in zip(shifts, estimated_shifts):
+    for shift, est_shift, angle, est_angle in zip(shifts, estimated_shifts, angles, estimated_angles):
         print('Original Shift:', shift)
         print('Estimated Shift:', est_shift)
+        print('Original Angle:', angle)
+        print('Estimated Angle:', est_angle)
         print()
     print('Original Gamma:', gamma)
     print('Estimated Gamma:', estimated_gamma)
@@ -291,11 +290,11 @@ if __name__ == '__main__':
     Y_K = generate_lr_images(hr_image, num_images, (100, 100, 100, 100), var, gamma, shifts, angles, return_all=False)
     h, w = 100, 100
     h_down, w_down = 25, 25
-    center_h, center_w = float(np.ceil(h_down/2)), float(np.ceil(w_down/2))
+    center_h, center_w = float(np.ceil(h/2)), float(np.ceil(w/2))
     center = torch.tensor([center_h, center_w]).to(device)
 
     X_n = get_coords(h, w).to(device)
-    X_m = get_coords(h_down, w_down).to(device)
+    X_m = get_coords(h, w, space=4).to(device)
 
     est_hr_image = torch.zeros(h, w).reshape(-1, 1).to(device)
     est_hr_image.requires_grad = True
@@ -304,7 +303,10 @@ if __name__ == '__main__':
     for idx in range(num_steps):
         print('Step %d/%d' % (idx+1, num_steps))
         optimizer.zero_grad()
-        loss = compute_posterior(est_hr_image, X_n, X_m, Y_K, beta, center, estimated_shifts, angles, estimated_gamma)
+        loss = compute_posterior(est_hr_image, X_n, X_m, Y_K, beta, center,
+                                 estimated_shifts,
+                                 estimated_angles,
+                                 estimated_gamma)
         loss.backward()
         optimizer.step()
         print('Current loss %.5f' % loss.item())
