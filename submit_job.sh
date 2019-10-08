@@ -4,5 +4,5 @@ gradient jobs create \
 --container ${CONTAINER_NAME_BAYES} \
 --registryUsername ${DOCKERHUB_USERNAME} \
 --registryPassword ${DOCKERHUB_PASSWORD} \
---machineType "P6000" \
+--machineType "P5000" \
 --command "./resolve.sh"
