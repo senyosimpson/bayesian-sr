@@ -38,7 +38,7 @@ def generate_lr_images(hr_image, num_images, borders, var, gamma=2, shifts=None,
         shifts = torch.tensor(shifts).to(torch.device('cuda'))
     if angles is None:
         angles = [0.]  # store for comparison
-        angles.extend([np.random.randint(-4, 5) for _ in range(num_images - 1)])  # angle = np.random.randint(-4, 5)
+        angles.extend([float(np.random.randint(-2, 3)) for _ in range(num_images - 1)])
         angles = torch.tensor(angles).to(torch.device('cuda'))
     Y_K = []
 
@@ -299,7 +299,7 @@ if __name__ == '__main__':
     est_hr_image = torch.zeros(h, w).reshape(-1, 1).to(device)
     est_hr_image.requires_grad = True
     optimizer = torch.optim.Adam([est_hr_image], lr=0.005)
-    num_steps = 600
+    num_steps = 200
     for idx in range(num_steps):
         print('Step %d/%d' % (idx+1, num_steps))
         optimizer.zero_grad()
