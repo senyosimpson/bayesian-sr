@@ -1,3 +1,4 @@
+import os
 import argparse
 import torch
 import numpy as np
@@ -321,6 +322,10 @@ if __name__ == '__main__':
                         type=str,
                         required=True,
                         help='The path to the image')
+    parser.add_argument('--logdir',
+                        type=str,
+                        required=True,
+                        help='the location to save images to')
     parser.add_argument('--num-images',
                         type=int,
                         required=False,
@@ -343,6 +348,7 @@ if __name__ == '__main__':
     device = torch.device('cuda' if use_cuda else 'cpu')
 
     image_path = args.image_path
+    logdir = args.logdir
     num_images = args.num_images
     upscale_factor = args.upscale_factor
     seed = args.seed
@@ -450,8 +456,11 @@ if __name__ == '__main__':
         if idx % 100 == 0:
             out_hr_image = est_hr_image.reshape(h, w)
             out_hr_image = out_hr_image.cpu().detach().numpy()
-            io.imsave('/artifacts/out_%d.png' % idx, out_hr_image)
+            save_path = 'out_%d.png' % idx
+            save_path = os.path.join(logdir, save_path)
+            io.imsave(save_path, out_hr_image)
 
     out_hr_image = est_hr_image.reshape(h, w)
     out_hr_image = out_hr_image.cpu().detach().numpy()
-    io.imsave('/artifacts/final_out.png', out_hr_image)
+    save_path = os.path.join(logdir, 'final_out.png')
+    io.imsave(save_path, out_hr_image)
