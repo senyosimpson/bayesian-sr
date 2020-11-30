@@ -444,10 +444,11 @@ if __name__ == '__main__':
         print('Step %d/%d' % (idx+1, num_steps))
         optimizer.zero_grad()
         loss = compute_posterior(est_hr_image, x_i, x_j,
-                                 Y_K, beta, center,
+                                 Y_K, center,
                                  estimated_shifts,
                                  estimated_angles,
                                  estimated_gamma,
+								 beta, 
                                  device)
         loss.backward()
         optimizer.step()
